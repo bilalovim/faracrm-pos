@@ -609,16 +609,19 @@ class Chat(AuditMixin, DotModel):
 
         if not self.is_internal:
             session = env.apps.db.get_session()
-            # Маппинг contact connector через общий contact_type_id (integer FK)
-            query = """
+            # Подбор contact → connector: тот же тип ИЛИ оба телефонного
+            # формата (ContactType.MATCH_SQL) — даёт «отправку по номеру».
+            query = f"""
                 SELECT DISTINCT
                     cc.id as connector_id,
                     cc.type as connector_type,
                     cc.name as connector_name
                 FROM chat_member cm
                 JOIN contact c ON c.partner_id = cm.partner_id AND c.active = true
+                JOIN contact_type ict ON ict.id = c.contact_type_id
                 JOIN chat_connector cc ON cc.active = true
-                    AND cc.contact_type_id = c.contact_type_id
+                JOIN contact_type cct ON cct.id = cc.contact_type_id
+                    AND {env.models.contact_type.MATCH_SQL}
                 WHERE cm.chat_id = %s
                   AND cm.partner_id IS NOT NULL
                   AND cm.is_active = true

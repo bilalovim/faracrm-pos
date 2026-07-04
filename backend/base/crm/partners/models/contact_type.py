@@ -29,6 +29,13 @@ class ContactType(DotModel):
 
     __table__ = "contact_type"
 
+    # SQL-условие «контакт партнёра подходит коннектору»: один тип ИЛИ оба
+    # телефонного формата (is_phone_format) — второе даёт «отправку по номеру».
+    # В запросе нужны алиасы contact_type: cct — коннектора, ict — контакта.
+    MATCH_SQL = (
+        "(cct.id = ict.id OR (cct.is_phone_format AND ict.is_phone_format))"
+    )
+
     id: int = Integer(primary_key=True)
 
     # Код типа (уникальный: phone, email, telegram, ...)
@@ -252,11 +259,16 @@ INITIAL_CONTACT_TYPES = [
         "sequence": 11,
     },
     {
+        # Телефонный канал MAX (max_business): адресация по номеру телефона,
+        # поэтому is_phone_format=True — контакт взаимозаменяем с phone/whatsapp/
+        # viber в подборе коннектора (см. ContactType.MATCH_SQL).
+        # Бот-канал (max_bot) использует отдельный тип `max_bot` (user_id).
         "name": "max",
         "label": "MAX",
+        "is_phone_format": True,
         "icon": "IconMessageCircle",
         "color": "grape",
-        "placeholder": "ID пользователя (user_id)",
+        "placeholder": "+7 999 123-45-67",
         "pattern": None,
         "sequence": 12,
     },

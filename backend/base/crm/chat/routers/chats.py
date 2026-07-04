@@ -322,36 +322,42 @@ async def get_chats(
     """
     unread_task = session.execute(unread_query, (user_id, chat_ids, user_id))
 
-    # Запрос информации о коннекторах
-    # Новая логика: получаем коннекторы на основе контактов партнёров-участников чата
-    # Маппинг contact → connector через общий contact_type_id (integer FK)
-    # contact.contact_type_id = chat_connector.contact_type_id
-    connectors_query = """
-        SELECT DISTINCT
-            cm.chat_id,
-            cc.id as connector_id,
-            cc.type as connector_type,
-            cc.name as connector_name,
-            c.id as contact_id,
-            c.name as contact_value
-        FROM chat_member cm
-        JOIN contact c ON c.partner_id = cm.partner_id AND c.active = true
-        JOIN chat_connector cc ON cc.active = true
-            AND cc.contact_type_id = c.contact_type_id
-        WHERE cm.chat_id = ANY(%s)
-          AND cm.partner_id IS NOT NULL
-          AND cm.is_active = true
-    """
-    connectors_task = session.execute(connectors_query, (chat_ids,))
+    # ОТКЛЮЧЕНО: поле chat.connectors в ответе списка нигде на фронте не
+    # читается (0 обращений к `.connectors` в frontend/src), а этот запрос
+    # гонял JOIN по chat_member/contact/contact_type/chat_connector на КАЖДУЮ
+    # загрузку сайдбара впустую. Живой пикер коннекторов — отдельный эндпоинт
+    # GET /chats/{id}/connectors → Chat.get_available_connectors (там же и
+    # phone-format фолбэк, ContactType.MATCH_SQL). Возвращаем connectors=[].
+    # Если поле понадобится (мобилка/другой клиент) — раскомментировать блок,
+    # connectors_task в gather, разбор connectors_raw и поле в result.
+    # connectors_query = f"""
+    #     SELECT DISTINCT ON (cm.chat_id, cc.id)
+    #         cm.chat_id,
+    #         cc.id as connector_id,
+    #         cc.type as connector_type,
+    #         cc.name as connector_name,
+    #         c.id as contact_id,
+    #         c.name as contact_value
+    #     FROM chat_member cm
+    #     JOIN contact c ON c.partner_id = cm.partner_id AND c.active = true
+    #     JOIN contact_type ict ON ict.id = c.contact_type_id
+    #     JOIN chat_connector cc ON cc.active = true
+    #     JOIN contact_type cct ON cct.id = cc.contact_type_id
+    #         AND {env.models.contact_type.MATCH_SQL}
+    #     WHERE cm.chat_id = ANY(%s)
+    #       AND cm.partner_id IS NOT NULL
+    #       AND cm.is_active = true
+    #     ORDER BY cm.chat_id, cc.id, (cct.id = ict.id) DESC
+    # """
+    # connectors_task = session.execute(connectors_query, (chat_ids,))
 
     # Выполняем параллельно (каждый запрос в своём соединении из пула)
-    chats_orm, members_raw, last_messages_raw, unread_raw, connectors_raw = (
+    chats_orm, members_raw, last_messages_raw, unread_raw = (
         await asyncio.gather(
             chats_task,
             members_task,
             last_messages_task,
             unread_task,
-            connectors_task,
         )
     )
 
@@ -418,21 +424,21 @@ async def get_chats(
         row["chat_id"]: row["unread_count"] for row in unread_raw
     }
 
-    # Группируем коннекторы по chat_id (список)
-    connectors_by_chat: dict[int, list] = {}
-    for conn in connectors_raw:
-        cid = conn["chat_id"]
-        if cid not in connectors_by_chat:
-            connectors_by_chat[cid] = []
-        connectors_by_chat[cid].append(
-            {
-                "id": conn["connector_id"],
-                "type": conn["connector_type"],
-                "name": conn["connector_name"],
-                "contact_id": conn.get("contact_id"),
-                "contact_value": conn.get("contact_value"),
-            }
-        )
+    # ОТКЛЮЧЕНО вместе с connectors_query (см. выше) — поле не потребляется.
+    # connectors_by_chat: dict[int, list] = {}
+    # for conn in connectors_raw:
+    #     cid = conn["chat_id"]
+    #     if cid not in connectors_by_chat:
+    #         connectors_by_chat[cid] = []
+    #     connectors_by_chat[cid].append(
+    #         {
+    #             "id": conn["connector_id"],
+    #             "type": conn["connector_type"],
+    #             "name": conn["connector_name"],
+    #             "contact_id": conn.get("contact_id"),
+    #             "contact_value": conn.get("contact_value"),
+    #         }
+    #     )
 
     # Формируем результат
     result = []
@@ -448,7 +454,9 @@ async def get_chats(
             "chat_type": chat.chat_type,
             "is_internal": chat.is_internal,
             "active": chat.active,
-            "connectors": connectors_by_chat.get(chat.id, []),
+            # Всегда []: connectors_query отключён (поле не читается фронтом).
+            # Форму ответа сохраняем — тип Chat.connectors на фронте не опционален.
+            "connectors": [],
             "last_message_date": (
                 chat.last_message_date.isoformat()
                 if chat.last_message_date

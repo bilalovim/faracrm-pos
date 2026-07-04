@@ -368,14 +368,19 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
             recipients_ids = []
             if connector.contact_type_id:
                 connector_contact_type_id = connector.contact_type_id.id
-                # Находим контакты партнёров-участников чата
+                # Контакты партнёров: тот же тип ИЛИ оба телефонного формата
+                # (ContactType.MATCH_SQL). is_exact метит точное совпадение —
+                # ниже предпочитаем его phone-format фолбэку.
                 session = env.apps.db.get_session()
-                recipients_query = """
-                    SELECT c.id, c.name as contact_value
+                recipients_query = f"""
+                    SELECT c.id, c.name as contact_value,
+                           (cct.id = ict.id) as is_exact
                     FROM chat_member cm
                     JOIN contact c ON c.partner_id = cm.partner_id
                         AND c.active = true
-                        AND c.contact_type_id = %s
+                    JOIN contact_type ict ON ict.id = c.contact_type_id
+                    JOIN contact_type cct ON cct.id = %s
+                        AND {env.models.contact_type.MATCH_SQL}
                     WHERE cm.chat_id = %s
                       AND cm.partner_id IS NOT NULL
                       AND cm.is_active = true
@@ -383,6 +388,14 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
                 recipients_raw = await session.execute(
                     recipients_query, (connector_contact_type_id, chat_id)
                 )
+                recipients_raw = list(recipients_raw)
+                # Есть контакт точно нужного типа — шлём только по нему;
+                # phone-format фолбэк идёт в ход, лишь когда точного нет (иначе
+                # рискуем отправить на второй, посторонний номер партнёра).
+                if any(r["is_exact"] for r in recipients_raw):
+                    recipients_raw = [
+                        r for r in recipients_raw if r["is_exact"]
+                    ]
                 recipients_ids = [
                     {"id": r["id"], "contact_value": r["contact_value"]}
                     for r in recipients_raw
