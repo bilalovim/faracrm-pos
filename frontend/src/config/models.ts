@@ -78,12 +78,23 @@ export const modelsConfig: Record<string, ModelConfig> = {
         default: m.ViewFormContacts,
       })),
   },
+  // Справочник типов контактов — обычная таблица через Generic list/form:
+  // список с проваливанием в форму + редактирование (как chat_folder).
+  // Кастомный read-only ContactTypeList.tsx больше не используется.
   contact_type: {
     menu: MenuGroups.contacts,
-    list: () =>
-      import('@/fara_partners/ContactTypeList').then(m => ({
-        default: m.ViewListContactTypes,
-      })),
+    fields: [
+      'id',
+      'label',
+      'name',
+      'is_phone_format',
+      'placeholder',
+      'icon',
+      'color',
+      'pattern',
+      'sequence',
+      'active',
+    ],
   },
 
   // === CRM ===
