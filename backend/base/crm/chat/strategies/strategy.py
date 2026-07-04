@@ -293,10 +293,13 @@ class ChatStrategyBase(ABC):
             raise ValueError("Partner not found for contact")
         partner_name = contact.partner_id.name
 
-        # 2. Найти или создать связь с внешним чатом
+        # 2. Найти или создать связь с внешним чатом.
+        # Резолвим по external_id ЛИБО external_address (номер): при write-first
+        # связь могла быть создана по номеру, а ответ прийти по chat_id (или
+        # наоборот) — find_by_id_or_address покрывает оба случая.
         external_chat = (
-            await env.models.chat_external_chat.find_by_external_id(
-                external_id=adapter.chat_id,
+            await env.models.chat_external_chat.find_by_id_or_address(
+                key=adapter.chat_id,
                 connector_id=connector.id,
             )
         )
@@ -963,6 +966,11 @@ class ChatStrategyBase(ABC):
             )
 
             external_chat_id = None
+            # Флаг write-first: связи ещё нет, адресуем по контакту получателя.
+            # Ниже, ПОСЛЕ отправки, персистим external_chat (иначе входящий
+            # ответ не найдёт связь и создаст второй внутренний чат).
+            is_write_first = False
+            write_first_address = None
 
             if external_chat:
                 # Есть существующий external_chat - используем его
@@ -977,17 +985,8 @@ class ChatStrategyBase(ABC):
 
                 recipient = recipients_ids[0]
                 external_chat_id = recipient["contact_value"]
-
-                # Создаём external_chat для последующих сообщений
-                # await env.models.chat_external_chat.create_link(
-                #     external_id=external_chat_id,
-                #     connector_id=connector_id.id,
-                #     chat_id=chat_id,
-                # )
-                # logger.info(
-                #     f"Created external_chat for chat={chat_id}, "
-                #     f"connector={connector_id.id}, external_id={external_chat_id}"
-                # )
+                is_write_first = True
+                write_first_address = external_chat_id
             else:
                 logger.warning(
                     "No external_chat found for chat=%s, connector=%s and no recipients provided",
@@ -1047,13 +1046,20 @@ class ChatStrategyBase(ABC):
                                 e,
                             )
 
-                # Если нет вложений или есть текст без caption — отправляем текст
+                # Если нет вложений или есть текст без caption — отправляем текст.
+                # Второй элемент — канонический ключ переписки, который вернула
+                # стратегия (для write-first это нормализованный адрес/номер;
+                # когда стратегия начнёт возвращать реальный chat_id из ответа —
+                # это будет он).
+                conversation_key = None
                 if body.strip():
-                    text_msg_id, _ = await self.chat_send_message(
-                        connector=connector_id,
-                        user_from=connector_id.outbox_account_id,
-                        body=body,
-                        chat_id=external_chat_id,
+                    text_msg_id, conversation_key = (
+                        await self.chat_send_message(
+                            connector=connector_id,
+                            user_from=connector_id.outbox_account_id,
+                            body=body,
+                            chat_id=external_chat_id,
+                        )
                     )
                     if text_msg_id:
                         external_msg_id = text_msg_id
@@ -1066,6 +1072,40 @@ class ChatStrategyBase(ABC):
                         message_id=message_id,
                         external_chat_id=external_chat_id,
                     )
+
+                # Персистим связь чата при отправке-первым: без неё входящий
+                # ответ не найдёт external_chat и создаст ВТОРОЙ внутренний чат.
+                # external_id — ключ треда (пока = нормализованный адрес; когда
+                # стратегия отдаст реальный chat_id — перезапишется на него).
+                # external_address — сам адрес (номер), по нему входящий ответ
+                # найдётся даже после перезаписи external_id (см.
+                # ChatExternalChat.find_by_id_or_address). Идемпотентно: если
+                # связь уже успел создать входящий — не дублируем.
+                if is_write_first:
+                    thread_key = str(conversation_key or write_first_address)
+                    address_key = str(conversation_key or write_first_address)
+                    already = await env.models.chat_external_chat.search(
+                        filter=[
+                            ("chat_id", "=", chat_id),
+                            ("connector_id", "=", connector_id.id),
+                        ],
+                        fields=["id"],
+                        limit=1,
+                    )
+                    if not already:
+                        await env.models.chat_external_chat.create_link(
+                            external_id=thread_key,
+                            connector_id=connector_id.id,
+                            chat_id=chat_id,
+                            external_address=address_key,
+                        )
+                        logger.info(
+                            "write-first external_chat linked: chat=%s "
+                            "connector=%s address=%s",
+                            chat_id,
+                            connector_id.id,
+                            address_key,
+                        )
 
                 logger.info(
                     "Sent message to %s: internal=%s, external=%s",

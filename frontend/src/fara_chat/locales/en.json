@@ -341,6 +341,7 @@
     "contact_id": "Contact",
     "raw": "Raw Data",
     "external_chat_id": "External Chat ID",
+    "external_address": "External Chat address",
     "chat_id": "Internal Chat",
     "external_message_id": "External Message ID",
     "message_id": "Internal Message"

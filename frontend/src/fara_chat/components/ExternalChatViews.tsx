@@ -18,6 +18,7 @@ export function ViewListExternalChat() {
       sort="id">
       <Field name="id" label={t('fields.id')} />
       <Field name="external_id" label={t('fields.external_chat_id')} />
+      <Field name="external_address" label={t('fields.external_address')} />
       <Field name="connector_id" label={t('fields.connector_id')} />
       <Field name="chat_id" label={t('fields.chat_id')} />
       <Field name="create_datetime" label={t('fields.create_datetime')} />

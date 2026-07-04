@@ -33,9 +33,24 @@ class ChatExternalChat(DotModel):
 
     id: int = Integer(primary_key=True)
 
-    # Внешний идентификатор чата в стороннем сервисе
+    # Внешний идентификатор чата в стороннем сервисе.
+    # Каналы с реальным thread-id (Telegram/Avito/MAX после reconcile) хранят
+    # тут id переписки. При отправке-первым по номеру (write-first) сюда
+    # кладётся бутстрап-ключ (нормализованный адрес), который позже
+    # перезаписывается на реальный chat_id, когда стратегия его вернёт.
     external_id: str = Char(
         max_length=255, required=True, description="ID чата во внешней системе"
+    )
+
+    # Адрес получателя, которым инициировали переписку (номер телефона для
+    # write-first каналов: max_business, whatsapp). Стабильный per-(чат,
+    # коннектор) ключ. Нужен, чтобы входящий ответ нашёл эту связь по номеру,
+    # даже если external_id уже перезаписан на платформенный chat_id.
+    # Для каналов без адресации по номеру (Telegram/Avito) остаётся пустым.
+    external_address: str | None = Char(
+        max_length=255,
+        description="Адрес инициации (номер) для write-first каналов",
+        index=True,
     )
 
     # Связь с коннектором
@@ -86,6 +101,33 @@ class ChatExternalChat(DotModel):
         return results[0] if results else None
 
     @hybridmethod
+    async def find_by_id_or_address(self, key: str, connector_id: int):
+        """
+        Найти связь по ключу входящего, совпадающему С external_id ЛИБО
+        external_address. Нужно для write-first каналов: мы могли создать связь
+        по номеру (external_address), а платформа прислала ответ по своему
+        chat_id (external_id) — или наоборот.
+
+        Совпадение по external_id ЛИБО external_address, И тот же коннектор:
+        (external_id = key OR external_address = key) AND connector_id = cid.
+        """
+        results = await self.search(
+            filter=[
+                [
+                    ("external_id", "=", key),
+                    "or",
+                    ("external_address", "=", key),
+                ],
+                "and",
+                ("connector_id", "=", connector_id),
+            ],
+            fields=["chat_id", "item_title", "item_url", "external_id"],
+            limit=1,
+        )
+
+        return results[0] if results else None
+
+    @hybridmethod
     async def create_link(
         self,
         external_id: str,
@@ -93,9 +135,13 @@ class ChatExternalChat(DotModel):
         chat_id: int,
         item_title: str | None = None,
         item_url: str | None = None,
+        external_address: str | None = None,
     ):
         """
         Создать связь между внешним и внутренним чатом.
+
+        external_address — адрес инициации (номер) для write-first каналов;
+        для остальных не передаётся и остаётся пустым.
         """
         link = ChatExternalChat(
             external_id=external_id,
@@ -103,6 +149,7 @@ class ChatExternalChat(DotModel):
             chat_id=env.models.chat(id=chat_id),
             item_title=item_title,
             item_url=item_url,
+            external_address=external_address,
         )
 
         link.id = await self.create(payload=link)
