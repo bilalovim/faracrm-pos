@@ -40,6 +40,9 @@ class SecurityAccessChecker(AccessChecker["Session"]):
     чтобы избежать рекурсии (_check_access → check → search → _check_access).
     """
 
+    # FARA — политика default-deny: без сессии в контексте CRUD запрещён.
+    require_session = True
+
     def __init__(self, env: Environment):
         self.env = env
 

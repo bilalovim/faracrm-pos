@@ -6,7 +6,7 @@ CRUD benchmarks through ORM layer on 10k user dataset.
 
 import pytest
 
-from tests.performance.conftest import perf_timer, chunked_create_bulk
+from tests.performance.conftest import perf_timer
 
 pytestmark = [pytest.mark.performance, pytest.mark.asyncio]
 
@@ -58,7 +58,7 @@ class TestUserPerformance:
         ]
 
         async with perf_timer(perf_report, MODULE, "create_bulk — 1 000", n):
-            await chunked_create_bulk(User, payload)
+            await User.create_bulk(payload)
 
     # ── READ ──
 

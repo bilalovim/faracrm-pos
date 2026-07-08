@@ -47,7 +47,22 @@ from .exceptions import (
     RecordNotFound,
 )
 
-__version__ = "2.0.8"
+# Access control (permissive by default; opt-in default-deny via a checker
+# with require_session=True)
+from .access import (
+    Operation,
+    AccessChecker,
+    AccessDenied,
+    SystemSession,
+    AnonymousSession,
+    set_access_session,
+    get_access_session,
+    clear_access_session,
+    set_access_checker,
+    get_access_checker,
+)
+
+__version__ = "2.3.0"
 
 __all__ = [
     # Fields
@@ -86,4 +101,15 @@ __all__ = [
     "OrmConfigurationFieldException",
     "OrmUpdateEmptyParamsException",
     "RecordNotFound",
+    # Access control
+    "Operation",
+    "AccessChecker",
+    "AccessDenied",
+    "SystemSession",
+    "AnonymousSession",
+    "set_access_session",
+    "get_access_session",
+    "clear_access_session",
+    "set_access_checker",
+    "get_access_checker",
 ]

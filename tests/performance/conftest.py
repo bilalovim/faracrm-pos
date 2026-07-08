@@ -482,27 +482,6 @@ async def perf_timer(
 
 
 # ──────────────────────────────────────────────
-# Chunked bulk create (asyncpg 32767 param limit)
-# ──────────────────────────────────────────────
-
-ASYNCPG_MAX_PARAMS = 32_767
-
-
-async def chunked_create_bulk(model_cls, payload: list):
-    """
-    create_bulk in safe chunks to stay under asyncpg's 32767 parameter limit.
-    Auto-detects field count from the model class.
-    """
-    if not payload:
-        return
-    # Count actual store fields that will become SQL params
-    fields_per_row = len(model_cls.get_store_fields())
-    chunk_size = max(1, ASYNCPG_MAX_PARAMS // max(fields_per_row, 1) - 1)
-    for i in range(0, len(payload), chunk_size):
-        await model_cls.create_bulk(payload[i : i + chunk_size])
-
-
-# ──────────────────────────────────────────────
 # Seed fixtures (direct SQL for max speed)
 # ──────────────────────────────────────────────
 
@@ -692,7 +671,7 @@ async def seed_activities(db_pool, seed_users) -> int:
             """
             INSERT INTO activity (res_model, res_id, activity_type_id,
                                   user_id, date_deadline, state, done,
-                                  notification_sent, active, create_date, summary)
+                                  notification_sent, active, create_datetime, summary)
             SELECT
                 CASE g % 3 WHEN 0 THEN 'lead' WHEN 1 THEN 'partner' ELSE 'task' END,
                 (g % 1000) + 1,

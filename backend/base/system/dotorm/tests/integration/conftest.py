@@ -14,6 +14,7 @@ except ImportError:
 
 from dotorm.databases.postgres.session import NoTransactionSession
 from dotorm.databases.postgres.transaction import ContainerTransaction
+from dotorm.access import set_access_session, clear_access_session
 
 # ====================
 # Database configuration
@@ -24,6 +25,25 @@ DB_HOST = "127.0.0.1"
 DB_PORT = 5432
 DB_USER = "openpg"
 DB_PASSWORD = "openpgpwd"
+
+
+# ====================
+# Access control context
+# ====================
+
+
+@pytest.fixture(autouse=True)
+def dotorm_access_session():
+    """Provide a DotORM access session for every integration test.
+
+    The ORM default-denies CRUD when no session is set in context
+    (dotorm.orm.mixins.access._check_access). Integration tests exercise the
+    permissive default AccessChecker, so any non-None session unlocks access.
+    Autouse + no async deps → runs before db_pool/sample_data set up data.
+    """
+    set_access_session(object())
+    yield
+    clear_access_session()
 
 
 # ====================

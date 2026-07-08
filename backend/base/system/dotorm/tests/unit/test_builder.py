@@ -15,11 +15,21 @@ from dataclasses import dataclass
 
 @dataclass
 class MockField:
-    """Mock Field for testing Builder without full ORM."""
+    """Mock Field for testing Builder without full ORM.
+
+    Mirrors the slice of the real Field API the builder depends on:
+    - sql_type: used by the Postgres bulk-insert (unnest) path
+    - to_sql_update(): used by build_update / build_sql_update_from_schema
+    """
 
     store: bool = True
     relation: bool = False
     primary_key: bool = False
+    sql_type: str = "TEXT"
+
+    def to_sql_update(self, field_name: str, value):
+        """Default Field behaviour: 'field=%s' with the raw value as param."""
+        return f"{field_name}=%s", value
 
 
 @dataclass
@@ -79,22 +89,26 @@ class TestBuilderDelete:
         assert stmt == "DELETE FROM users WHERE id=%s"
 
     def test_build_delete_bulk(self):
-        """Test DELETE query for multiple records."""
+        """Postgres: bulk DELETE uses a single array param via ANY()."""
         stmt = self.builder.build_delete_bulk(count=3)
 
-        assert stmt == "DELETE FROM users WHERE id IN (%s,%s,%s)"
+        assert stmt == "DELETE FROM users WHERE id = ANY($1::int[])"
 
     def test_build_delete_bulk_single(self):
-        """Test DELETE bulk with single ID."""
+        """Postgres ANY() form is count-independent (still one array param)."""
         stmt = self.builder.build_delete_bulk(count=1)
 
-        assert stmt == "DELETE FROM users WHERE id IN (%s)"
+        assert stmt == "DELETE FROM users WHERE id = ANY($1::int[])"
 
     def test_build_delete_bulk_many(self):
-        """Test DELETE bulk with many IDs."""
-        stmt = self.builder.build_delete_bulk(count=10)
+        """MySQL: bulk DELETE expands to one placeholder per id."""
+        from dotorm.builder.builder import Builder
+        from dotorm.components.dialect import MYSQL
 
-        expected_placeholders = ",".join(["%s"] * 10)
+        builder = Builder(table="users", fields=self.fields, dialect=MYSQL)
+        stmt = builder.build_delete_bulk(count=10)
+
+        expected_placeholders = ", ".join(["%s"] * 10)
         assert (
             stmt == f"DELETE FROM users WHERE id IN ({expected_placeholders})"
         )
@@ -154,17 +168,38 @@ class TestBuilderCreate:
             self.builder.build_create({})
 
     def test_build_create_bulk(self):
-        """Test bulk INSERT."""
+        """Postgres bulk INSERT: unnest() with one typed array per column."""
         payloads = [
             {"name": "John", "email": "john@example.com"},
             {"name": "Jane", "email": "jane@example.com"},
         ]
-        stmt, values_lists = self.builder.build_create_bulk(payloads)
+        stmt, values = self.builder.build_create_bulk(payloads)
 
-        assert "INSERT INTO users" in stmt
-        assert "(name, email)" in stmt
-        assert len(values_lists) == 4
-        assert values_lists == [
+        assert stmt == (
+            "INSERT INTO users (name, email) "
+            "SELECT * FROM unnest($1::text[], $2::text[])"
+        )
+        # values transposed rows→columns: one array param per column
+        assert values == [
+            ["John", "Jane"],
+            ["john@example.com", "jane@example.com"],
+        ]
+
+    def test_build_create_bulk_mysql(self):
+        """MySQL bulk INSERT: multi-row VALUES with flat params."""
+        from dotorm.builder.builder import Builder
+        from dotorm.components.dialect import MYSQL
+
+        builder = Builder(table="users", fields=self.fields, dialect=MYSQL)
+        payloads = [
+            {"name": "John", "email": "john@example.com"},
+            {"name": "Jane", "email": "jane@example.com"},
+        ]
+        stmt, values = builder.build_create_bulk(payloads)
+
+        assert "INSERT INTO users (name, email) VALUES" in stmt
+        assert stmt.count("(%s, %s)") == 2
+        assert values == [
             "John",
             "john@example.com",
             "Jane",
@@ -218,12 +253,24 @@ class TestBuilderUpdate:
             self.builder.build_update({}, id=1)
 
     def test_build_update_bulk(self):
-        """Test bulk UPDATE."""
+        """Postgres bulk UPDATE: match ids via ANY() array param."""
         payload = {"active": False}
         stmt, values = self.builder.build_update_bulk(payload, ids=[1, 2, 3])
 
-        assert "UPDATE users SET active=%s" in stmt
-        assert "WHERE id IN (%s, %s, %s)" in stmt
+        assert stmt == "UPDATE users SET active=%s WHERE id = ANY(%s::int[])"
+        assert values == (False, [1, 2, 3])
+
+    def test_build_update_bulk_mysql(self):
+        """MySQL bulk UPDATE: ids expand to individual placeholders."""
+        from dotorm.builder.builder import Builder
+        from dotorm.components.dialect import MYSQL
+
+        builder = Builder(table="users", fields=self.fields, dialect=MYSQL)
+        stmt, values = builder.build_update_bulk(
+            {"active": False}, ids=[1, 2, 3]
+        )
+
+        assert stmt == "UPDATE users SET active=%s WHERE id IN (%s, %s, %s)"
         assert values == (False, 1, 2, 3)
 
 
@@ -310,16 +357,16 @@ class TestBuilderSearch:
         )
 
     def test_build_search_default(self):
-        """Test search with defaults."""
+        """Search with no args: all clauses optional (default None) —
+        no ORDER BY, no LIMIT, no bound values."""
         stmt, values = self.builder.build_search()
 
         assert (
-            'SELECT "id", "name", "email", "age", "active" FROM users  ORDER BY id DESC LIMIT %s'
-            in stmt
+            'SELECT "id", "name", "email", "age", "active" FROM users' in stmt
         )
-        assert "ORDER BY id DESC" in stmt
-        assert "LIMIT %s" in stmt
-        assert values == (80,)  # default limit
+        assert "ORDER BY" not in stmt
+        assert "LIMIT" not in stmt
+        assert values == ()
 
     def test_build_search_with_fields(self):
         """Test search with specific fields."""
@@ -347,22 +394,22 @@ class TestBuilderSearch:
         assert values == (20, 20)  # (end-start, start)
 
     def test_build_search_order_asc(self):
-        """Test search with ASC order."""
-        stmt, _ = self.builder.build_search(order="ASC")
+        """ASC ordering requires both sort and order to be given."""
+        stmt, _ = self.builder.build_search(sort="id", order="ASC")
 
         assert "ORDER BY id ASC" in stmt
 
     def test_build_search_order_desc(self):
-        """Test search with DESC order."""
-        stmt, _ = self.builder.build_search(order="desc")
+        """DESC ordering requires both sort and order to be given."""
+        stmt, _ = self.builder.build_search(sort="id", order="desc")
 
         assert "ORDER BY id DESC" in stmt
 
     def test_build_search_custom_sort(self):
         """Test search with custom sort field."""
-        stmt, _ = self.builder.build_search(sort="name")
+        stmt, _ = self.builder.build_search(sort="name", order="ASC")
 
-        assert "ORDER BY name" in stmt
+        assert "ORDER BY name ASC" in stmt
 
     def test_build_search_invalid_order_raises(self):
         """Test search with invalid order raises error."""
@@ -482,27 +529,35 @@ class TestBuilderHelpers:
     """Tests for helper functions."""
 
     def test_build_sql_update_from_schema(self):
-        """Test update SQL building helper."""
+        """Test update SQL building helper.
+
+        The helper now delegates each field's SET fragment to
+        field.to_sql_update(name, value), so a fields_map is required.
+        """
         from dotorm.builder.helpers import build_sql_update_from_schema
 
         sql = "UPDATE test SET %s WHERE id = %s"
         payload = {"name": "John", "age": 30}
+        fields_map = {"name": MockField(), "age": MockField()}
 
-        result_sql, values = build_sql_update_from_schema(sql, payload, id=1)
+        result_sql, values = build_sql_update_from_schema(
+            sql, payload, 1, fields_map
+        )
 
         assert "name=%s" in result_sql
         assert "age=%s" in result_sql
         assert values == ("John", 30, 1)
 
     def test_build_sql_update_bulk_from_schema(self):
-        """Test bulk update SQL building helper."""
+        """Test bulk update SQL building helper (id as a list)."""
         from dotorm.builder.helpers import build_sql_update_from_schema
 
         sql = "UPDATE test SET %s WHERE id IN (%s)"
         payload = {"active": False}
+        fields_map = {"active": MockField()}
 
         result_sql, values = build_sql_update_from_schema(
-            sql, payload, id=[1, 2, 3]
+            sql, payload, [1, 2, 3], fields_map
         )
 
         assert "active=%s" in result_sql
@@ -538,5 +593,5 @@ class TestBuilderHelpers:
 
         with pytest.raises(ValueError, match="cannot be empty"):
             build_sql_update_from_schema(
-                "UPDATE test SET %s WHERE id = %s", {}, 1
+                "UPDATE test SET %s WHERE id = %s", {}, 1, {}
             )

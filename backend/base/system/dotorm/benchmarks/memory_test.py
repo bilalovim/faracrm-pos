@@ -31,10 +31,10 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════════
 
 DATABASE_CONFIG = {
-    "host": "localhost",
+    "host": "127.0.0.1",
     "port": 5432,
-    "user": "postgres",
-    "password": "postgres",
+    "user": "openpg",
+    "password": "openpgpwd",
     "database": "benchmark_test",
 }
 
@@ -87,6 +87,11 @@ def test_dotorm_memory(record_count: int = 1000):
         import asyncpg
         from dotorm import DotModel, Integer, Char, Boolean
         from dotorm.components import POSTGRES
+        from dotorm.access import set_access_session
+
+        # DotORM default-denies CRUD without a session in context; set one in
+        # this task so BenchmarkUser.search is allowed (permissive default checker).
+        set_access_session(object())
 
         # Create pool
         pool = await asyncpg.create_pool(**DATABASE_CONFIG)

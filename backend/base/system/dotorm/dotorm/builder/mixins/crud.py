@@ -23,6 +23,9 @@ class CRUDMixin:
     Builder работает с dict, а не с моделью.
     Сериализация модели в dict происходит в ORM слое.
 
+    Dialect-specific statement shapes (bulk insert/update/delete) are delegated
+    to self.dialect — the mixin stays free of per-database branching.
+
     Expects: table, fields, dialect, get_store_fields(), filter_parser
     """
 
@@ -37,11 +40,10 @@ class CRUDMixin:
         Postgres: ANY($1::int[]) — single array param, no parse overhead.
         MySQL:    IN (%s, %s, ...) — individual params (no array type).
         """
-        if self.dialect.name == "postgres":
-            return f"DELETE FROM {self.table} WHERE id = ANY($1::int[])"
-
-        placeholders = self.dialect.make_placeholders(count)
-        return f"DELETE FROM {self.table} WHERE id IN ({placeholders})"
+        return (
+            f"DELETE FROM {self.table} "
+            f"WHERE {self.dialect.make_ids_predicate(count, ids_first=True)}"
+        )
 
     def build_create(
         self: "BuilderProtocol",
@@ -51,40 +53,6 @@ class CRUDMixin:
         stmt = f"INSERT INTO {self.table} (%s) VALUES (%s)"
         stmt, values_list = build_sql_create_from_schema(stmt, payload_dict)
         return stmt, values_list
-
-    # Mapping of SQL types to PostgreSQL array cast types for unnest
-    _PG_ARRAY_TYPE_MAP = {
-        "INTEGER": "int4",
-        "SERIAL": "int4",
-        "BIGINT": "int8",
-        "BIGSERIAL": "int8",
-        "SMALLINT": "int2",
-        "SMALLSERIAL": "int2",
-        "TEXT": "text",
-        "BOOL": "bool",
-        "TIMESTAMPTZ": "timestamptz",
-        "DATE": "date",
-        "TIME": "time",
-        "TIMETZ": "timetz",
-        "DOUBLE PRECISION": "float8",
-        "JSONB": "jsonb",
-        "JSON": "jsonb",
-    }
-
-    def _get_pg_array_type(self: "BuilderProtocol", sql_type: str) -> str:
-        """Map SQL type to PostgreSQL array cast type for unnest."""
-        # Exact match
-        upper = sql_type.upper()
-        if upper in self._PG_ARRAY_TYPE_MAP:
-            return self._PG_ARRAY_TYPE_MAP[upper]
-        # VARCHAR(N) -> text
-        if upper.startswith("VARCHAR"):
-            return "text"
-        # DECIMAL(M,N) -> numeric
-        if upper.startswith("DECIMAL"):
-            return "numeric"
-        # Fallback
-        return "text"
 
     def build_create_bulk(
         self: "BuilderProtocol",
@@ -102,65 +70,15 @@ class CRUDMixin:
             raise ValueError("payloads_dicts cannot be empty")
 
         fields_list = list(payloads_dicts[0].keys())
+        columns = ", ".join(fields_list)
 
-        if self.dialect.name == "postgres":
-            return self._build_create_bulk_unnest(payloads_dicts, fields_list)
-
-        return self._build_create_bulk_values(payloads_dicts, fields_list)
-
-    def _build_create_bulk_unnest(
-        self: "BuilderProtocol",
-        payloads_dicts: list[dict[str, Any]],
-        fields_list: list[str],
-    ) -> tuple[str, list]:
-        """Postgres: INSERT ... SELECT * FROM unnest($1::type[], $2::type[], ...)"""
-        query_columns = ", ".join(fields_list)
-
-        # Build column arrays (transpose rows→columns)
-        column_arrays = []
-        unnest_params = []
-        for i, field_name in enumerate(fields_list, 1):
-            col_values = [row[field_name] for row in payloads_dicts]
-            column_arrays.append(col_values)
-
-            # Get PostgreSQL array type from field definition
-            field_obj = self.fields.get(field_name)
-            if field_obj:
-                # sql_type can be class attr (str) or property
-                sql_type = field_obj.sql_type
-                pg_type = self._get_pg_array_type(sql_type)
-            else:
-                pg_type = "text"
-            unnest_params.append(f"${i}::{pg_type}[]")
-
-        unnest_clause = ", ".join(unnest_params)
-        stmt = (
-            f"INSERT INTO {self.table} ({query_columns}) "
-            f"SELECT * FROM unnest({unnest_clause})"
+        # Dialect fills the source clause after "INSERT INTO t (cols)":
+        # unnest(...) for Postgres, VALUES (...), ... for MySQL.
+        source, values = self.dialect.make_bulk_insert_source(
+            payloads_dicts, fields_list, self.fields
         )
-        return stmt, column_arrays
-
-    def _build_create_bulk_values(
-        self: "BuilderProtocol",
-        payloads_dicts: list[dict[str, Any]],
-        fields_list: list[str],
-    ) -> tuple[str, list]:
-        """MySQL/Clickhouse: INSERT ... VALUES (%s,%s,...), (%s,%s,...), ..."""
-        query_columns = ", ".join(fields_list)
-        num_fields = len(fields_list)
-
-        all_values = []
-        value_groups = []
-        placeholder_group = f"({self.dialect.make_placeholders(num_fields)})"
-
-        for payload_dict in payloads_dicts:
-            for field in fields_list:
-                all_values.append(payload_dict[field])
-            value_groups.append(placeholder_group)
-
-        values_clause = ", ".join(value_groups)
-        stmt = f"INSERT INTO {self.table} ({query_columns}) VALUES {values_clause}"
-        return stmt, all_values
+        stmt = f"INSERT INTO {self.table} ({columns}) {source}"
+        return stmt, values
 
     def build_update(
         self: "BuilderProtocol",
@@ -194,26 +112,15 @@ class CRUDMixin:
         fields_list = list(payload_dict.keys())
         values_list = [payload_dict[f] for f in fields_list]
 
-        # SET field1=%s, field2=%s
+        # SET field1=%s, field2=%s (dialect-agnostic)
         set_clause = ", ".join(f"{field}=%s" for field in fields_list)
 
-        if self.dialect.name == "postgres":
-            # ids as single array parameter: ANY($N::int[])
-            values_list.append(ids)
-            stmt = (
-                f"UPDATE {self.table} SET {set_clause} "
-                f"WHERE id = ANY(%s::int[])"
-            )
-        else:
-            # ids as individual parameters: IN (%s, %s, ...)
-            placeholders = self.dialect.make_placeholders(len(ids))
-            values_list.extend(ids)
-            stmt = (
-                f"UPDATE {self.table} SET {set_clause} "
-                f"WHERE id IN ({placeholders})"
-            )
-
-        return stmt, tuple(values_list)
+        stmt = (
+            f"UPDATE {self.table} SET {set_clause} "
+            f"WHERE {self.dialect.make_ids_predicate(len(ids))}"
+        )
+        values = tuple(values_list) + tuple(self.dialect.bind_ids(ids))
+        return stmt, values
 
     def build_get(
         self: "BuilderProtocol",

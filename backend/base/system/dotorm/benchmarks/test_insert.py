@@ -11,9 +11,8 @@ Run:
 """
 
 import pytest
-import asyncio
 
-from .conftest import generate_user_data
+from .conftest import generate_user_data, run_async
 
 # ═══════════════════════════════════════════════════════════════════════════
 # DotORM Benchmarks
@@ -24,9 +23,7 @@ class TestDotORMInsert:
     """DotORM INSERT benchmarks."""
 
     @pytest.mark.benchmark(group="insert-single")
-    async def test_insert_single_100(
-        self, dotorm_pool, clean_tables, benchmark
-    ):
+    def test_insert_single_100(self, dotorm_pool, clean_tables, benchmark):
         """Insert 100 records one by one."""
         from dotorm import DotModel, Integer, Char, Boolean
         from dotorm.components import POSTGRES
@@ -49,15 +46,13 @@ class TestDotORMInsert:
                 await BenchmarkUser.create(user)
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
 
     @pytest.mark.benchmark(group="insert-bulk")
-    async def test_insert_bulk_1000(
-        self, dotorm_pool, clean_tables, benchmark
-    ):
+    def test_insert_bulk_1000(self, dotorm_pool, clean_tables, benchmark):
         """Bulk insert 1000 records."""
         from dotorm import DotModel, Integer, Char, Boolean
         from dotorm.components import POSTGRES
@@ -79,15 +74,13 @@ class TestDotORMInsert:
             await BenchmarkUser.create_bulk(users)
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
 
     @pytest.mark.benchmark(group="insert-bulk-large")
-    async def test_insert_bulk_10000(
-        self, dotorm_pool, clean_tables, benchmark
-    ):
+    def test_insert_bulk_10000(self, dotorm_pool, clean_tables, benchmark):
         """Bulk insert 10000 records."""
         from dotorm import DotModel, Integer, Char, Boolean
         from dotorm.components import POSTGRES
@@ -109,7 +102,7 @@ class TestDotORMInsert:
             await BenchmarkUser.create_bulk(users)
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=3,
             rounds=2,
         )
@@ -124,9 +117,7 @@ class TestRawAsyncpgInsert:
     """Raw asyncpg INSERT benchmarks (baseline)."""
 
     @pytest.mark.benchmark(group="insert-bulk")
-    async def test_insert_bulk_1000_raw(
-        self, dotorm_pool, clean_tables, benchmark
-    ):
+    def test_insert_bulk_1000_raw(self, dotorm_pool, clean_tables, benchmark):
         """Bulk insert 1000 records with raw asyncpg."""
         data = generate_user_data(1000)
 
@@ -144,15 +135,13 @@ class TestRawAsyncpgInsert:
                 )
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
 
     @pytest.mark.benchmark(group="insert-bulk")
-    async def test_insert_bulk_1000_copy(
-        self, dotorm_pool, clean_tables, benchmark
-    ):
+    def test_insert_bulk_1000_copy(self, dotorm_pool, clean_tables, benchmark):
         """Bulk insert 1000 records with COPY (fastest)."""
         data = generate_user_data(1000)
 
@@ -168,7 +157,7 @@ class TestRawAsyncpgInsert:
                 )
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
@@ -183,7 +172,7 @@ class TestSQLAlchemyInsert:
     """SQLAlchemy INSERT benchmarks."""
 
     @pytest.mark.benchmark(group="insert-bulk")
-    async def test_insert_bulk_1000_sqlalchemy(
+    def test_insert_bulk_1000_sqlalchemy(
         self, sqlalchemy_engine, clean_tables, benchmark
     ):
         """Bulk insert 1000 records with SQLAlchemy."""
@@ -217,7 +206,7 @@ class TestSQLAlchemyInsert:
                 await conn.execute(insert(users_table), data)
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
@@ -232,24 +221,17 @@ class TestTortoiseInsert:
     """Tortoise ORM INSERT benchmarks."""
 
     @pytest.mark.benchmark(group="insert-bulk")
-    async def test_insert_bulk_1000_tortoise(
+    def test_insert_bulk_1000_tortoise(
         self, tortoise_connection, clean_tables, benchmark
     ):
         """Bulk insert 1000 records with Tortoise ORM."""
         try:
-            from tortoise.models import Model
-            from tortoise import fields
+            # Must use the model registered via Tortoise.init
+            # (benchmarks.tortoise_models); an inline model isn't bound to any
+            # connection → default_connection is None → ConfigurationError.
+            from .tortoise_models import BenchmarkUser
         except ImportError:
             pytest.skip("Tortoise ORM not installed")
-
-        class BenchmarkUser(Model):
-            id = fields.IntField(pk=True)
-            name = fields.CharField(max_length=100)
-            email = fields.CharField(max_length=255)
-            active = fields.BooleanField(default=True)
-
-            class Meta:
-                table = "benchmark_users"
 
         data = generate_user_data(1000)
 
@@ -258,7 +240,7 @@ class TestTortoiseInsert:
             await BenchmarkUser.bulk_create(users)
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )

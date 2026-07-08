@@ -4,9 +4,11 @@ Performance: Activity (100 000 rows)
 CRUD benchmarks on polymorphic activity table.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
-from tests.performance.conftest import perf_timer, chunked_create_bulk
+from tests.performance.conftest import perf_timer
 
 pytestmark = [pytest.mark.performance, pytest.mark.asyncio]
 
@@ -59,7 +61,7 @@ class TestActivityPerformance:
         ]
 
         async with perf_timer(perf_report, MODULE, f"create_bulk — {n:,}", n):
-            await chunked_create_bulk(Activity, payload)
+            await Activity.create_bulk(payload)
 
     # ── READ ──
 

@@ -11,19 +11,17 @@ Run:
 """
 
 import pytest
-import asyncio
 
-from .conftest import generate_user_data
+from .conftest import generate_user_data, run_async
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Setup: Seed database with test data
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@pytest.fixture
-async def seeded_database_for_update(dotorm_pool, clean_tables):
-    """Seed database with test data for UPDATE benchmarks."""
-    async with dotorm_pool.acquire() as conn:
+async def _seed_update(pool):
+    """Seed users for UPDATE benchmarks."""
+    async with pool.acquire() as conn:
         user_data = generate_user_data(1000)
         for i, user in enumerate(user_data, 1):
             await conn.execute(
@@ -37,6 +35,11 @@ async def seeded_database_for_update(dotorm_pool, clean_tables):
                 user["active"],
             )
 
+
+@pytest.fixture
+def seeded_database_for_update(dotorm_pool, clean_tables):
+    """Seed database with test data for UPDATE benchmarks."""
+    run_async(_seed_update(dotorm_pool))
     yield
 
 
@@ -49,7 +52,7 @@ class TestDotORMUpdate:
     """DotORM UPDATE benchmarks."""
 
     @pytest.mark.benchmark(group="update-single")
-    async def test_update_single_100(
+    def test_update_single_100(
         self, dotorm_pool, seeded_database_for_update, benchmark
     ):
         """Update 100 records one by one."""
@@ -73,13 +76,13 @@ class TestDotORMUpdate:
                     await user.update(BenchmarkUser(name=f"Updated User {i}"))
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=3,
             rounds=2,
         )
 
     @pytest.mark.benchmark(group="update-bulk")
-    async def test_update_bulk_1000(
+    def test_update_bulk_1000(
         self, dotorm_pool, seeded_database_for_update, benchmark
     ):
         """Bulk update 1000 records."""
@@ -102,13 +105,13 @@ class TestDotORMUpdate:
             await BenchmarkUser.update_bulk(ids, payload)
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
 
     @pytest.mark.benchmark(group="update-partial")
-    async def test_update_partial_fields(
+    def test_update_partial_fields(
         self, dotorm_pool, seeded_database_for_update, benchmark
     ):
         """Update only specific fields."""
@@ -134,7 +137,7 @@ class TestDotORMUpdate:
                 await user.update(payload, fields=["name"])  # Only update name
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=10,
             rounds=5,
         )
@@ -149,7 +152,7 @@ class TestRawAsyncpgUpdate:
     """Raw asyncpg UPDATE benchmarks (baseline)."""
 
     @pytest.mark.benchmark(group="update-bulk")
-    async def test_update_bulk_1000_raw(
+    def test_update_bulk_1000_raw(
         self, dotorm_pool, seeded_database_for_update, benchmark
     ):
         """Bulk update 1000 records with raw asyncpg."""
@@ -168,13 +171,13 @@ class TestRawAsyncpgUpdate:
                 )
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
 
     @pytest.mark.benchmark(group="update-single")
-    async def test_update_single_100_raw(
+    def test_update_single_100_raw(
         self, dotorm_pool, seeded_database_for_update, benchmark
     ):
         """Update 100 records one by one with raw asyncpg."""
@@ -193,7 +196,7 @@ class TestRawAsyncpgUpdate:
                     )
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=3,
             rounds=2,
         )
@@ -208,7 +211,7 @@ class TestSQLAlchemyUpdate:
     """SQLAlchemy UPDATE benchmarks."""
 
     @pytest.mark.benchmark(group="update-bulk")
-    async def test_update_bulk_1000_sqlalchemy(
+    def test_update_bulk_1000_sqlalchemy(
         self, sqlalchemy_engine, seeded_database_for_update, benchmark
     ):
         """Bulk update 1000 records with SQLAlchemy."""
@@ -246,7 +249,7 @@ class TestSQLAlchemyUpdate:
                 await conn.execute(stmt)
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )

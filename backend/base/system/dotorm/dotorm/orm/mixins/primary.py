@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Self, TypeVar
 from ...exceptions import RecordNotFound
 from ...access import Operation
 from ...components.dialect import POSTGRES
-from ...model import JsonMode
+from ...model import JsonMode, DefaultKind
 from ...decorators import hybridmethod
 from ...fields import TranslatedChar
 
@@ -41,6 +41,10 @@ class OrmPrimaryMixin(_Base):
     - __table__
     - prepare_form_id()
     """
+
+    _depends_local_triggers: dict = {}
+    _depends_parent_triggers: dict = {}
+    _depends_prefetch: dict = {}
 
     async def delete(self, session=None, depends_jobs=None):
         await self._check_access(Operation.DELETE, record_ids=[self.id])
@@ -432,9 +436,13 @@ class OrmPrimaryMixin(_Base):
         for p in payload:
             await cls._apply_defaults(p)
 
+        # Горячий путь: get_json диспатчит по предвычисленным видам полей
+        # (без per-row isinstance). exclude_unset=False (по умолчанию) →
+        # неприсвоенные поля = None, у всех строк одинаковый набор ключей —
+        # этого требует unnest-билдер. НЕ json() — тот дропает None-ключи.
         payloads_dicts = [
-            p.json(
-                exclude=exclude_fields, only_store=True, mode=JsonMode.CREATE
+            p.get_json(
+                only_store=True, mode=JsonMode.CREATE, exclude=exclude_fields
             )
             for p in payload
         ]
@@ -486,18 +494,22 @@ class OrmPrimaryMixin(_Base):
                      Незаданные поля остаются как Field дескрипторы.
         """
 
-        for field_name, field_class in payload.get_store_fields_dict().items():
-            if payload.is_assigned(field_name):
+        # Итерируем ТОЛЬКО поля с дефолтом (предвычислено в _build_field_cache),
+        # без per-row iscoroutinefunction/callable introspection. Проверка
+        # «уже задано» — прямой lookup в __dict__ (эквивалент is_assigned).
+        plan = payload._cache_default_plan
+        if not plan:
+            return
+        assigned = payload.__dict__
+        for field_name, kind, default in plan:
+            if field_name in assigned:
                 continue
-            if field_class.default is None:
-                continue
-            if callable(field_class.default):
-                if asyncio.iscoroutinefunction(field_class.default):
-                    setattr(payload, field_name, await field_class.default())
-                else:
-                    setattr(payload, field_name, field_class.default())
-            else:
-                setattr(payload, field_name, field_class.default)
+            if kind == DefaultKind.STATIC:
+                setattr(payload, field_name, default)
+            elif kind == DefaultKind.SYNC:
+                setattr(payload, field_name, default())
+            else:  # DefaultKind.ASYNC
+                setattr(payload, field_name, await default())
 
     @hybridmethod
     async def get(

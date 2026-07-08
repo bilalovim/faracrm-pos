@@ -122,7 +122,7 @@ async def raw_pool():
                 done BOOLEAN NOT NULL DEFAULT false,
                 active BOOLEAN NOT NULL DEFAULT true,
                 notification_sent BOOLEAN NOT NULL DEFAULT false,
-                create_date TIMESTAMPTZ NOT NULL DEFAULT now()
+                create_datetime TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         """)
         await conn.execute("""
@@ -136,7 +136,7 @@ async def raw_pool():
             """
             INSERT INTO bench_activity_raw
                 (res_model, res_id, summary, date_deadline, user_id, state, done,
-                 notification_sent, active, create_date)
+                 notification_sent, active, create_datetime)
             SELECT
                 CASE g % 3 WHEN 0 THEN 'lead' WHEN 1 THEN 'partner' ELSE 'task' END,
                 (g % 1000) + 1,
@@ -377,7 +377,7 @@ if HAS_SQLALCHEMY:
         notification_sent: Mapped[bool] = mapped_column(
             SABoolean, default=False
         )
-        create_date: Mapped[datetime] = mapped_column(
+        create_datetime: Mapped[datetime] = mapped_column(
             SADateTime(timezone=True),
             default=lambda: datetime.now(timezone.utc),
         )
@@ -412,7 +412,7 @@ async def sa_session():
         await conn.execute(f"""
             INSERT INTO bench_activity_sa
                 (res_model, res_id, summary, date_deadline, user_id, state, done,
-                 notification_sent, active, create_date)
+                 notification_sent, active, create_datetime)
             SELECT
                 CASE g % 3 WHEN 0 THEN 'lead' WHEN 1 THEN 'partner' ELSE 'task' END,
                 (g % 1000) + 1,
@@ -615,7 +615,7 @@ if HAS_TORTOISE:
         done = fields.BooleanField(default=False, index=True)
         active = fields.BooleanField(default=True)
         notification_sent = fields.BooleanField(default=False)
-        create_date = fields.DatetimeField(auto_now_add=True)
+        create_datetime = fields.DatetimeField(auto_now_add=True)
 
         class Meta:
             table = "bench_activity_tortoise"
@@ -650,7 +650,7 @@ async def tortoise_db():
         await conn.execute(f"""
             INSERT INTO bench_activity_tortoise
                 (res_model, res_id, summary, date_deadline, user_id, state, done,
-                 notification_sent, active, create_date)
+                 notification_sent, active, create_datetime)
             SELECT
                 CASE g % 3 WHEN 0 THEN 'lead' WHEN 1 THEN 'partner' ELSE 'task' END,
                 (g % 1000) + 1,
@@ -826,7 +826,7 @@ async def dotorm_ready(db_pool):
             """
             INSERT INTO activity
                 (res_model, res_id, activity_type_id, user_id, date_deadline,
-                 state, done, notification_sent, active, create_date, summary)
+                 state, done, notification_sent, active, create_datetime, summary)
             SELECT
                 CASE g%3 WHEN 0 THEN 'lead' WHEN 1 THEN 'partner' ELSE 'task' END,
                 (g % 1000) + 1,
@@ -882,7 +882,6 @@ class TestDotorm:
         from backend.base.system.dotorm.dotorm.databases.postgres.transaction import (
             ContainerTransaction,
         )
-        from tests.performance.conftest import chunked_create_bulk
 
         types = await ActivityType.search(fields=["id"], limit=1)
         type_id = types[0].id
@@ -904,7 +903,7 @@ class TestDotorm:
             async with bench(
                 self.ORM, f"create_bulk — {BULK_CREATE_N:,}", BULK_CREATE_N
             ):
-                await chunked_create_bulk(Activity, payload)
+                await Activity.create_bulk(payload)
 
     async def test_get_single(self, db_pool, dotorm_ready, comparison_report):
         from backend.base.crm.activity.models.activity import Activity

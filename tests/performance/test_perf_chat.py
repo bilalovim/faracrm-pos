@@ -10,7 +10,7 @@ Covers:
 
 import pytest
 
-from tests.performance.conftest import perf_timer, chunked_create_bulk
+from tests.performance.conftest import perf_timer
 
 pytestmark = [pytest.mark.performance, pytest.mark.asyncio]
 
@@ -71,7 +71,7 @@ class TestChatMessagePerformance:
         async with perf_timer(
             perf_report, MODULE, f"message create_bulk — {n:,}", n
         ):
-            await chunked_create_bulk(ChatMessage, payload)
+            await ChatMessage.create_bulk(payload)
 
     # ── READ ──
 

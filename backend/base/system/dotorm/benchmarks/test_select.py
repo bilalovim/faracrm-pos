@@ -13,19 +13,17 @@ Run:
 """
 
 import pytest
-import asyncio
 
-from .conftest import generate_user_data, generate_role_data
+from .conftest import generate_user_data, generate_role_data, run_async
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Setup: Seed database with test data
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@pytest.fixture
-async def seeded_database(dotorm_pool, clean_tables):
-    """Seed database with test data for SELECT benchmarks."""
-    async with dotorm_pool.acquire() as conn:
+async def _seed_select(pool):
+    """Seed roles + users for SELECT benchmarks."""
+    async with pool.acquire() as conn:
         # Create roles
         role_data = generate_role_data(10)
         for i, role in enumerate(role_data, 1):
@@ -54,6 +52,11 @@ async def seeded_database(dotorm_pool, clean_tables):
                 (i % 10) + 1,
             )
 
+
+@pytest.fixture
+def seeded_database(dotorm_pool, clean_tables):
+    """Seed database with test data for SELECT benchmarks."""
+    run_async(_seed_select(dotorm_pool))
     yield
 
 
@@ -66,7 +69,7 @@ class TestDotORMSelect:
     """DotORM SELECT benchmarks."""
 
     @pytest.mark.benchmark(group="select-simple")
-    async def test_select_1000(self, dotorm_pool, seeded_database, benchmark):
+    def test_select_1000(self, dotorm_pool, seeded_database, benchmark):
         """Select 1000 records without relations."""
         from dotorm import DotModel, Integer, Char, Boolean
         from dotorm.components import POSTGRES
@@ -89,13 +92,13 @@ class TestDotORMSelect:
             return users
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=10,
             rounds=5,
         )
 
     @pytest.mark.benchmark(group="select-with-relation")
-    async def test_select_1000_with_m2o(
+    def test_select_1000_with_m2o(
         self, dotorm_pool, seeded_database, benchmark
     ):
         """Select 1000 records WITH Many2One relation (optimized)."""
@@ -138,15 +141,13 @@ class TestDotORMSelect:
             return users
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=10,
             rounds=5,
         )
 
     @pytest.mark.benchmark(group="select-with-filter")
-    async def test_select_filtered(
-        self, dotorm_pool, seeded_database, benchmark
-    ):
+    def test_select_filtered(self, dotorm_pool, seeded_database, benchmark):
         """Select with complex filter."""
         from dotorm import DotModel, Integer, Char, Boolean
         from dotorm.components import POSTGRES
@@ -178,7 +179,7 @@ class TestDotORMSelect:
             return users
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=10,
             rounds=5,
         )
@@ -193,9 +194,7 @@ class TestRawAsyncpgSelect:
     """Raw asyncpg SELECT benchmarks (baseline)."""
 
     @pytest.mark.benchmark(group="select-simple")
-    async def test_select_1000_raw(
-        self, dotorm_pool, seeded_database, benchmark
-    ):
+    def test_select_1000_raw(self, dotorm_pool, seeded_database, benchmark):
         """Select 1000 records with raw asyncpg."""
 
         async def run():
@@ -209,13 +208,13 @@ class TestRawAsyncpgSelect:
                 return [dict(row) for row in rows]
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=10,
             rounds=5,
         )
 
     @pytest.mark.benchmark(group="select-with-relation")
-    async def test_select_1000_with_join_raw(
+    def test_select_1000_with_join_raw(
         self, dotorm_pool, seeded_database, benchmark
     ):
         """Select 1000 records with JOIN (raw asyncpg)."""
@@ -233,7 +232,7 @@ class TestRawAsyncpgSelect:
                 return [dict(row) for row in rows]
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=10,
             rounds=5,
         )
@@ -248,9 +247,7 @@ class TestN1Problem:
     """Demonstrates the N+1 problem and DotORM's solution."""
 
     @pytest.mark.benchmark(group="n1-problem")
-    async def test_n1_naive_approach(
-        self, dotorm_pool, seeded_database, benchmark
-    ):
+    def test_n1_naive_approach(self, dotorm_pool, seeded_database, benchmark):
         """N+1 problem: Naive approach (1001 queries)."""
 
         async def run():
@@ -277,13 +274,13 @@ class TestN1Problem:
                 return results
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
 
     @pytest.mark.benchmark(group="n1-problem")
-    async def test_n1_optimized_approach(
+    def test_n1_optimized_approach(
         self, dotorm_pool, seeded_database, benchmark
     ):
         """N+1 solved: Batch approach (2 queries)."""
@@ -318,13 +315,13 @@ class TestN1Problem:
                 return results
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )
 
     @pytest.mark.benchmark(group="n1-problem")
-    async def test_n1_dotorm_automatic(
+    def test_n1_dotorm_automatic(
         self, dotorm_pool, seeded_database, benchmark
     ):
         """N+1 solved: DotORM automatic optimization (2 queries)."""
@@ -364,7 +361,7 @@ class TestN1Problem:
             return users
 
         benchmark.pedantic(
-            lambda: asyncio.get_event_loop().run_until_complete(run()),
+            lambda: run_async(run()),
             iterations=5,
             rounds=3,
         )

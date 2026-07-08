@@ -21,7 +21,13 @@ class AccessMixin(_Base):
     """
     Mixin добавляющий проверку доступа в CRUD операции.
 
-    Если AccessSession не установлена — проверки пропускаются.
+    Политика зависит от активного чекера (AccessChecker.require_session):
+      • require_session=False (базовый пермиссивный чекер, по умолчанию) —
+        default-allow: без сессии CRUD разрешён (автономный dotorm).
+      • require_session=True (FARA SecurityAccessChecker) — default-deny: без
+        сессии в контексте операция запрещается с AccessDenied (защита от
+        забытого Depends / неинициализированного контекста). Публичные роуты
+        ставят AnonymousSession, фон/тесты — свою через set_access_session.
     SystemSession даёт полный доступ.
     """
 
@@ -37,18 +43,21 @@ class AccessMixin(_Base):
             AccessDenied: если сессия не установлена либо доступ запрещён
         """
         session = get_access_session()
-        if session is None:
-            # Default deny: отсутствие сессии — это явная ошибка
-            # конфигурации, не разрешение. Защищает от случайных утечек
-            # через забытые `Depends(verify_access)` или
-            # неинициализированный context в фоновых задачах.
-            raise AccessDenied(
-                f"No session in DotORM context for {operation.value} on "
-                f"{cls.__table__}. Public routes must set AnonymousSession "
-                f"explicitly via Depends(AuthTokenApp.use_anonymous_session)."
-            )
-
         checker = get_access_checker()
+        if session is None:
+            # Политика зависит от чекера:
+            #   require_session=True (реальный security-чекер) → default-deny:
+            #     нет сессии = явная ошибка конфигурации (забытый Depends /
+            #     неинициализированный контекст фоновой задачи).
+            #   require_session=False (базовый пермиссивный / автономный
+            #     dotorm) → default-allow: пускаем без проверок.
+            if checker.require_session:
+                raise AccessDenied(
+                    f"No session in DotORM context for {operation.value} on "
+                    f"{cls.__table__}. Public routes must set AnonymousSession "
+                    f"explicitly via Depends(AuthTokenApp.use_anonymous_session)."
+                )
+            return filter
 
         has_access, domain = await checker.check_access(
             session, cls.__table__, operation, record_ids
@@ -121,13 +130,16 @@ class AccessMixin(_Base):
             return
 
         session = get_access_session()
-        if session is None:
-            raise AccessDenied(
-                f"No session in DotORM context for field-level "
-                f"{operation.value} on {cls.__table__}."
-            )
-
         checker = get_access_checker()
+        if session is None:
+            # Как и в _check_access: жёстко только при require_session=True.
+            if checker.require_session:
+                raise AccessDenied(
+                    f"No session in DotORM context for field-level "
+                    f"{operation.value} on {cls.__table__}."
+                )
+            return
+
         denied = await checker.check_field_access(
             session, cls.__table__, operation, to_check
         )

@@ -7,7 +7,7 @@ Typical high-load scenario: token lookup, session validation.
 
 import pytest
 
-from tests.performance.conftest import perf_timer, chunked_create_bulk
+from tests.performance.conftest import perf_timer
 
 pytestmark = [pytest.mark.performance, pytest.mark.asyncio]
 
@@ -59,7 +59,7 @@ class TestSessionPerformance:
         ]
 
         async with perf_timer(perf_report, MODULE, f"create_bulk — {n:,}", n):
-            await chunked_create_bulk(Session, payload)
+            await Session.create_bulk(payload)
 
     # ── READ ──
 

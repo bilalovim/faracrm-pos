@@ -1,26 +1,33 @@
 """
 Контекст доступа для DotORM.
 
-Использование:
+Политика зависит от активного AccessChecker (флаг require_session):
 
-    # При старте приложения (security/app.py):
-    set_access_checker(SecurityAccessChecker(env))
+  • Базовый AccessChecker (по умолчанию) — require_session=False:
+    dotorm пермиссивен и работает БЕЗ сессии (default-allow). Ставить сессию
+    не нужно — CRUD доступен из коробки для автономного использования.
 
-    # При каждом запросе (verify_access):
-    set_access_session(session)  # Session из security модуля
+  • Реальный чекер (FARA AccessChecker) — require_session=True:
+    политика default-deny. Любая CRUD-операция требует установленной сессии;
+    без неё — AccessDenied (защита от забытого Depends / неинициализированного
+    контекста). Сессию выставляет каждый вход в ORM:
+      - HTTP-запрос: Depends(verify_access) / AnonymousSession для публичных;
+      - фон / скрипт / тест: set_access_session(...) (+ clear в конце).
 
-    # В DotModel автоматически:
-    # - check_table_access() перед CRUD операциями
-    # - check_row_access() для конкретных записей (get/update/delete)
-    # - get_domain_filter() для фильтрации выборки (search)
+Включить access-control в автономном dotorm:
+
+    set_access_checker(MyChecker())     # свой чекер с require_session=True
+    set_access_session(SystemSession()) # готовая сессия полного доступа
+    ...
+    clear_access_session()
+
+В DotModel вызывается автоматически перед/во время CRUD:
+    check_access() → (has_access, domain-фильтр для search).
 """
 
 from contextvars import ContextVar
 from enum import StrEnum
-from typing import TYPE_CHECKING, TypeVar, Generic
-
-if TYPE_CHECKING:
-    from backend.base.crm.security.access_control import SecurityAccessChecker
+from typing import TypeVar, Generic
 
 
 class Operation(StrEnum):
@@ -37,7 +44,7 @@ BYPASS_DOMAIN_LEGACY = [["id", "!=", None]]
 
 # Зарезервированный токен для field-level доступа (атрибуты role_* на полях,
 # см. fields.Field.required_roles). Означает «писать/читать это поле может
-# только суперпользователь». Конкретную трактовку даёт SecurityAccessChecker:
+# только суперпользователь». Конкретную трактовку даёт AccessChecker:
 # для FARA это session.user_id.is_admin. Это НЕ код реальной роли —
 # подобрано так, чтобы не пересекаться с code в таблице roles.
 SUPERUSER = "__superuser__"
@@ -46,13 +53,51 @@ SUPERUSER = "__superuser__"
 TSession = TypeVar("TSession")
 
 
+# ============================================================
+# Built-in access sessions (для автономного использования dotorm)
+# ============================================================
+#
+# Сессия — произвольный объект, который читает ваш AccessChecker (для FARA —
+# Session с user_id/ролями из security-модуля). Базовый AccessChecker
+# содержимым не интересуется — ему важно лишь, что сессия НЕ None. Эти классы
+# дают готовую «осмысленную» сессию, когда вы включаете access-control
+# (require_session=True) но не хотите тащить security-модуль FARA.
+#
+# NB: у FARA есть свои SystemSession/AnonymousSession в
+# security.models.sessions — они несут реального пользователя. Эти —
+# лёгкие маркеры для standalone.
+
+
+class SystemSession:
+    """Полный доступ — обходит проверки. Для скриптов/миграций/задач/тестов."""
+
+    is_system = True
+    user_id = None
+
+
+class AnonymousSession:
+    """Публичная сессия без аутентифицированного пользователя."""
+
+    is_system = False
+    user_id = None
+
+
 class AccessChecker(Generic[TSession]):
     """
     Базовый класс проверки доступа.
 
-    По умолчанию разрешает всё.
-    Модуль security наследует и переопределяет методы.
+    По умолчанию разрешает всё И не требует сессию в контексте
+    (require_session=False) — dotorm работает автономно, без access-control.
+    Модуль security наследует, переопределяет методы и ставит
+    require_session=True, включая политику default-deny.
     """
+
+    # Требовать ли установленную сессию доступа.
+    #   False (по умолчанию) — CRUD разрешён даже без сессии в контексте
+    #     (пермиссивно / автономное использование dotorm — default-allow).
+    #   True — отсутствие сессии трактуется как ошибка → AccessDenied
+    #     (default-deny; так делает FARA AccessChecker).
+    require_session: bool = False
 
     async def check_access(
         self,
@@ -169,13 +214,13 @@ _access_session: ContextVar = ContextVar("access_session", default=None)
 # ============================================================
 
 
-def set_access_checker(checker: "SecurityAccessChecker") -> None:
-    """Устанавливает SecurityAccessChecker (один раз при старте)."""
+def set_access_checker(checker: "AccessChecker") -> None:
+    """Устанавливает AccessChecker (один раз при старте)."""
     _state["checker"] = checker
 
 
-def get_access_checker() -> "SecurityAccessChecker":
-    """Возвращает текущий SecurityAccessChecker."""
+def get_access_checker() -> "AccessChecker":
+    """Возвращает текущий AccessChecker."""
     return _state["checker"]
 
 

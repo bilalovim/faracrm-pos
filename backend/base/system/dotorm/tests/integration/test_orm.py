@@ -119,11 +119,17 @@ class TestGet:
         assert user.name == "John Doe"
 
     async def test_get_nonexistent_returns_none(self, session, clean_tables):
-        """Test getting non-existent record returns None."""
+        """Missing record: get_or_none() returns None, get() raises."""
         from .models import User
+        from dotorm.exceptions import RecordNotFound
 
-        user = await User.get(99999)
+        # get_or_none — отсутствие записи это норма
+        user = await User.get_or_none(99999)
         assert user is None
+
+        # get — по контракту бросает RecordNotFound
+        with pytest.raises(RecordNotFound):
+            await User.get(99999)
 
     async def test_get_with_specific_fields(self, sample_data):
         """Test getting record with specific fields."""
@@ -205,7 +211,7 @@ class TestDelete:
 
         await model.delete()
 
-        deleted = await Model.get(model_id)
+        deleted = await Model.get_or_none(model_id)
         assert deleted is None
 
     async def test_delete_bulk(self, session, clean_tables):
@@ -270,7 +276,10 @@ class TestSearch:
         """Test search with ASC order."""
         from .models import User
 
-        users = await User.search(fields=["id", "name"], order="ASC")
+        # ORDER BY применяется только когда переданы И sort, И order.
+        users = await User.search(
+            fields=["id", "name"], sort="id", order="ASC"
+        )
 
         assert users[0].id < users[1].id
 
@@ -278,7 +287,10 @@ class TestSearch:
         """Test search with DESC order."""
         from .models import User
 
-        users = await User.search(fields=["id", "name"], order="DESC")
+        # ORDER BY применяется только когда переданы И sort, И order.
+        users = await User.search(
+            fields=["id", "name"], sort="id", order="DESC"
+        )
 
         assert users[0].id > users[1].id
 
