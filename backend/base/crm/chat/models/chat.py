@@ -592,12 +592,24 @@ class Chat(AuditMixin, DotModel):
         now = datetime.now(timezone.utc)
         await self.update(Chat(last_message_date=now, update_datetime=now))
 
-    async def get_available_connectors(self):
+    async def get_available_connectors(
+        self, current_user_id: int | None = None
+    ):
         """
         Получить список доступных коннекторов для чата.
 
-        Логика: смотрим контакты партнёра-участника чата и находим
+        Логика: смотрим контакты собеседника-участника чата и находим
         подходящие коннекторы по маппингу contact_type → connector_type.
+
+        Собеседником может быть как партнёр (cm.partner_id → contact.partner_id),
+        так и пользователь (cm.user_id → contact.user_id) — например, во
+        внутреннем чате с другим сотрудником. Поэтому подбор идёт по обеим
+        связям. current_user_id исключает контакты САМОГО отправителя, чтобы
+        в direct-чате из двух юзеров не предлагать «написать самому себе».
+
+        Args:
+            current_user_id: ID текущего пользователя — его user-контакты
+                из подбора исключаются. Если None — не исключаем никого.
         """
         connectors = [
             {
@@ -607,34 +619,44 @@ class Chat(AuditMixin, DotModel):
             }
         ]
 
-        if not self.is_internal:
-            session = env.apps.db.get_session()
-            # Подбор contact → connector: тот же тип ИЛИ оба телефонного
-            # формата (ContactType.MATCH_SQL) — даёт «отправку по номеру».
-            query = f"""
-                SELECT DISTINCT
-                    cc.id as connector_id,
-                    cc.type as connector_type,
-                    cc.name as connector_name
-                FROM chat_member cm
-                JOIN contact c ON c.partner_id = cm.partner_id AND c.active = true
-                JOIN contact_type ict ON ict.id = c.contact_type_id
-                JOIN chat_connector cc ON cc.active = true
-                JOIN contact_type cct ON cct.id = cc.contact_type_id
-                    AND {env.models.contact_type.MATCH_SQL}
-                WHERE cm.chat_id = %s
-                  AND cm.partner_id IS NOT NULL
-                  AND cm.is_active = true
-                ORDER BY cc.type, cc.name
-            """
-            result = await session.execute(query, (self.id,))
-            for row in result:
-                connectors.append(
-                    {
-                        "connector_id": row["connector_id"],
-                        "connector_type": row["connector_type"],
-                        "connector_name": row["connector_name"],
-                    }
+        session = env.apps.db.get_session()
+        # Подбор contact → connector: тот же тип ИЛИ оба телефонного
+        # формата (ContactType.MATCH_SQL) — даёт «отправку по номеру».
+        # Контакт участника ищем и среди partner-, и среди user-контактов.
+        # %s: current_user_id (дважды — NULL-safe исключение себя), chat_id.
+        # ::int у первого параметра обязателен: в выражении `$1 IS NULL`
+        # Postgres не может вывести тип параметра (IS NULL принимает любой)
+        # и падает с IndeterminateDatatypeError — явный каст это чинит.
+        query = f"""
+            SELECT DISTINCT
+                cc.id as connector_id,
+                cc.type as connector_type,
+                cc.name as connector_name
+            FROM chat_member cm
+            JOIN contact c ON c.active = true AND (
+                    (cm.partner_id IS NOT NULL AND c.partner_id = cm.partner_id)
+                 OR (cm.user_id IS NOT NULL AND c.user_id = cm.user_id
+                        AND (%s::int IS NULL OR cm.user_id <> %s))
                 )
+            JOIN contact_type ict ON ict.id = c.contact_type_id
+            JOIN chat_connector cc ON cc.active = true
+            JOIN contact_type cct ON cct.id = cc.contact_type_id
+                AND {env.models.contact_type.MATCH_SQL}
+            WHERE cm.chat_id = %s
+                AND (cm.partner_id IS NOT NULL OR cm.user_id IS NOT NULL)
+                AND cm.is_active = true
+            ORDER BY cc.type, cc.name
+        """
+        result = await session.execute(
+            query, (current_user_id, current_user_id, self.id)
+        )
+        for row in result:
+            connectors.append(
+                {
+                    "connector_id": row["connector_id"],
+                    "connector_type": row["connector_type"],
+                    "connector_name": row["connector_name"],
+                }
+            )
 
         return connectors

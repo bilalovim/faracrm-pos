@@ -87,6 +87,23 @@ async def get_connector_webhook_info(req: Request, connector_id: int):
     return {"data": info}
 
 
+@router_private.post("/connectors/{connector_id}/test")
+async def test_connector_connection(req: Request, connector_id: int):
+    """
+    Проверить соединение коннектора по текущим настройкам.
+
+    Для Email — логин по SMTP/IMAP: пользователь сразу видит, верны
+    ли сервер и пароль. Для типов без поддержки проверки возвращает
+    ok=false с пояснением (см. ChatStrategyBase.test_connection).
+    """
+    env: "Environment" = req.app.state.env
+
+    connector = await env.models.chat_connector.get(connector_id)
+
+    result = await connector.strategy.test_connection(connector)
+    return {"data": result}
+
+
 @router_private.get("/connectors/{connector_id}/account/self")
 async def get_connector_self_account(req: Request, connector_id: int):
     """

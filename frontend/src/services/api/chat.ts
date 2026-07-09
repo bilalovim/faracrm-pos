@@ -558,6 +558,23 @@ const chatApi = api.injectEndpoints({
       query: ({ connectorId }) => `/connectors/${connectorId}/account/self`,
     }),
 
+    // Test connection with current saved settings (e.g. Email SMTP/IMAP login)
+    testConnector: build.mutation<
+      {
+        data: {
+          ok: boolean;
+          message: string;
+          details: Record<string, unknown>;
+        };
+      },
+      { connectorId: number }
+    >({
+      query: ({ connectorId }) => ({
+        url: `/connectors/${connectorId}/test`,
+        method: 'POST',
+      }),
+    }),
+
     // Delete connector
     deleteConnector: build.mutation<
       { success: boolean },
@@ -983,6 +1000,7 @@ export const {
   useUnsetConnectorWebhookMutation,
   useLazyGetConnectorWebhookInfoQuery,
   useLazyGetConnectorSelfAccountQuery,
+  useTestConnectorMutation,
 } = chatApi;
 
 export const {

@@ -361,6 +361,16 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
             if not connector.active:
                 return False
 
+            # Письмо в чате рендерится как HTML (EmailMessageContent на фронте
+            # по message_type == 'email'). Обычные сообщения — plain-текст,
+            # поэтому исходящее через email-коннектор помечаем типом 'email',
+            # иначе наш HTML показался бы сырыми тегами.
+            if connector.type == "email" and message.message_type != "email":
+                await message.update(
+                    env.models.chat_message(message_type="email")
+                )
+                message.message_type = "email"
+
             # Собираем recipients_ids - контакты партнёров чата,
             # которые подходят под тип коннектора
             # Используем contact_type_id коннектора (integer FK)
@@ -368,25 +378,36 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
             recipients_ids = []
             if connector.contact_type_id:
                 connector_contact_type_id = connector.contact_type_id.id
-                # Контакты партнёров: тот же тип ИЛИ оба телефонного формата
+                # Контакты получателя: тот же тип ИЛИ оба телефонного формата
                 # (ContactType.MATCH_SQL). is_exact метит точное совпадение —
                 # ниже предпочитаем его phone-format фолбэку.
+                # Получателем может быть партнёр (cm.partner_id) ИЛИ юзер
+                # (cm.user_id) — как во внутреннем чате с сотрудником; матчим
+                # обе связи. Себя (user_id-отправителя) исключаем, чтобы не
+                # слать письмо самому себе.
+                # Плейсхолдеры %s по порядку: user_id, contact_type_id, chat_id.
                 session = env.apps.db.get_session()
                 recipients_query = f"""
                     SELECT c.id, c.name as contact_value,
                            (cct.id = ict.id) as is_exact
                     FROM chat_member cm
-                    JOIN contact c ON c.partner_id = cm.partner_id
-                        AND c.active = true
+                    JOIN contact c ON c.active = true AND (
+                            (cm.partner_id IS NOT NULL
+                                AND c.partner_id = cm.partner_id)
+                         OR (cm.user_id IS NOT NULL
+                                AND c.user_id = cm.user_id
+                                AND cm.user_id <> %s)
+                        )
                     JOIN contact_type ict ON ict.id = c.contact_type_id
                     JOIN contact_type cct ON cct.id = %s
                         AND {env.models.contact_type.MATCH_SQL}
                     WHERE cm.chat_id = %s
-                      AND cm.partner_id IS NOT NULL
+                      AND (cm.partner_id IS NOT NULL OR cm.user_id IS NOT NULL)
                       AND cm.is_active = true
                 """
                 recipients_raw = await session.execute(
-                    recipients_query, (connector_contact_type_id, chat_id)
+                    recipients_query,
+                    (user_id, connector_contact_type_id, chat_id),
                 )
                 recipients_raw = list(recipients_raw)
                 # Есть контакт точно нужного типа — шлём только по нему;
@@ -421,7 +442,7 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
                 "message": {
                     "id": message.id,
                     "body": message.body,
-                    "message_type": "comment",
+                    "message_type": message.message_type or "comment",
                     "author": {
                         "id": user_id,
                         "name": auth_session.user_id.name,

@@ -5,7 +5,10 @@ import { FormRow, FormSection } from '@/components/Form/Layout';
 import { useTranslation } from 'react-i18next';
 import { useFormContext } from '@/components/Form/FormContext';
 import { registerExtension } from '@/shared/extensions';
-import { Select } from '@mantine/core';
+import { Button, Group, Select } from '@mantine/core';
+import { IconPlugConnected } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
+import { useTestConnectorMutation } from '@/services/api/chat';
 
 // Поля которые использует email расширение
 const EMAIL_FIELDS = [
@@ -17,6 +20,11 @@ const EMAIL_FIELDS = [
   'imap_ssl',
   'email_username',
   'email_password',
+  // Отправитель (From) — outbox-аккаунт. external_account_id при сохранении
+  // создаёт chat_external_account (см. ChatConnector._ensure_outbox_account),
+  // а его external_id становится From-адресом письма (email.strategy).
+  'external_account_id',
+  'email_from_name',
 ];
 
 /**
@@ -115,10 +123,52 @@ type PresetKey = keyof typeof EMAIL_PRESETS;
 export function ViewFormConnectorEmail() {
   const { t } = useTranslation('chat');
   const form = useFormContext();
+  const [testConnector, { isLoading: isTesting }] = useTestConnectorMutation();
 
   if (form.values?.type !== 'email') {
     return null;
   }
+
+  const connectorId = form.values?.id;
+
+  const handleTestConnection = async () => {
+    // Проверка идёт по СОХРАНЁННЫМ настройкам коннектора, поэтому для
+    // нового/изменённого коннектора сперва нужно сохранить форму.
+    if (!connectorId) {
+      notifications.show({
+        title: t('common.info', 'Информация'),
+        message: t(
+          'connector.email.saveBeforeTest',
+          'Сначала сохраните коннектор, затем проверьте соединение',
+        ),
+        color: 'yellow',
+      });
+      return;
+    }
+
+    try {
+      const { data } = await testConnector({
+        connectorId: Number(connectorId),
+      }).unwrap();
+
+      notifications.show({
+        title: data.ok
+          ? t('connector.email.testOk', 'Соединение установлено')
+          : t('connector.email.testFail', 'Ошибка соединения'),
+        message: data.message,
+        color: data.ok ? 'green' : 'red',
+        autoClose: data.ok ? 4000 : false,
+      });
+    } catch (error: any) {
+      notifications.show({
+        title: t('common.error', 'Ошибка'),
+        message:
+          error?.data?.detail ||
+          t('connector.email.testError', 'Не удалось проверить соединение'),
+        color: 'red',
+      });
+    }
+  };
 
   // Определяем текущий пресет на основе smtp_host
   const getCurrentPreset = (): PresetKey | null => {
@@ -229,6 +279,37 @@ export function ViewFormConnectorEmail() {
             name="email_password"
             label={t('connector.fields.emailPassword', 'Пароль')}
             type="password"
+          />
+        </FormRow>
+        <Group justify="flex-end" mt="sm">
+          <Button
+            variant="light"
+            leftSection={<IconPlugConnected size={16} />}
+            onClick={handleTestConnection}
+            loading={isTesting}>
+            {t('connector.email.testConnection', 'Проверить соединение')}
+          </Button>
+        </Group>
+      </FormSection>
+
+      {/* Отправитель (From) — outbox-аккаунт.
+          Для email «от кого» не зависит от реального отправителя-сотрудника:
+          это кастомный адрес. external_account_id при сохранении создаёт
+          outbox-аккаунт, чей external_id уходит в заголовок From. Если пусто —
+          From = email отправителя из «Учётных данных». */}
+      <FormSection
+        title={t('connector.groups.emailSender', 'Отправитель (From)')}
+        collapsible>
+        <FormRow cols={2}>
+          <FieldChar
+            name="external_account_id"
+            label={t('connector.fields.emailFrom', 'Email отправителя (From)')}
+            placeholder="noreply@company.com"
+          />
+          <FieldChar
+            name="email_from_name"
+            label={t('connector.fields.emailFromName', 'Имя отправителя')}
+            placeholder="Company Support"
           />
         </FormRow>
       </FormSection>

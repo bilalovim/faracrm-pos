@@ -50,6 +50,12 @@ class EmailStrategy(ChatStrategyBase):
     strategy_type = "email"
     TIMEOUT = 30
 
+    # Email адресуется своими полями (email_from/email_username), внешний
+    # outbox-аккаунт ему не нужен. Без этого флага send_outgoing_message
+    # молча пропускал отправку (у email connector.outbox_account_id = None,
+    # т.к. external_account_id не заполняется) и письмо не уходило.
+    requires_outbox_account = False
+
     async def get_or_generate_token(
         self, connector: "ChatConnector"
     ) -> str | None:
@@ -108,6 +114,113 @@ class EmailStrategy(ChatStrategyBase):
             "email_from": connector.email_from,
         }
 
+    async def test_connection(self, connector: "ChatConnector") -> dict:
+        """
+        Проверить учётные данные почты: логин по SMTP и по IMAP.
+
+        Позволяет пользователю в форме коннектора сразу увидеть, верный
+        ли пароль/сервер, не дожидаясь первой отправки или cron-фетча.
+
+        Проверяет оба канала независимо (SMTP и IMAP), чтобы точно
+        показать, где именно проблема. Возвращает:
+            {"ok": bool, "message": str, "details": {smtp: {...}, imap: {...}}}
+        """
+        username = connector.email_username
+        password = connector.email_password
+
+        if not username or not password:
+            return {
+                "ok": False,
+                "message": "Укажите Email и пароль",
+                "details": {},
+            }
+
+        smtp = await self._test_smtp(connector, username, password)
+        imap = await self._test_imap(connector, username, password)
+
+        # SMTP обязателен (отправка), IMAP опционален (получение).
+        # Если IMAP-сервер не задан — не считаем это ошибкой.
+        ok = smtp["ok"] and (imap["ok"] or imap.get("skipped"))
+
+        if ok:
+            message = "Соединение успешно"
+            if imap.get("skipped"):
+                message += " (IMAP не настроен — только отправка)"
+        elif not smtp["ok"]:
+            message = f"SMTP: {smtp['error']}"
+        else:
+            message = f"IMAP: {imap['error']}"
+
+        return {
+            "ok": ok,
+            "message": message,
+            "details": {"smtp": smtp, "imap": imap},
+        }
+
+    async def _test_smtp(
+        self, connector: "ChatConnector", username: str, password: str
+    ) -> dict:
+        """Проверить SMTP-подключение и логин."""
+        smtp_host = connector.smtp_host
+        if not smtp_host:
+            return {"ok": False, "error": "не указан SMTP-сервер"}
+
+        smtp_port = connector.smtp_port or 587
+        smtp_encryption = connector.smtp_encryption or "starttls"
+
+        client = aiosmtplib.SMTP(
+            hostname=smtp_host,
+            port=smtp_port,
+            use_tls=smtp_encryption == "ssl",
+            start_tls=smtp_encryption == "starttls",
+            timeout=self.TIMEOUT,
+        )
+        try:
+            await client.connect()
+            await client.login(username, password)
+            await client.quit()
+            return {"ok": True, "error": None}
+        except Exception as e:
+            logger.warning(
+                "Email SMTP test failed for connector %s: %s",
+                connector.id,
+                e,
+            )
+            try:
+                await client.quit()
+            except Exception:
+                pass
+            return {"ok": False, "error": str(e)}
+
+    async def _test_imap(
+        self, connector: "ChatConnector", username: str, password: str
+    ) -> dict:
+        """Проверить IMAP-подключение и логин."""
+        imap_host = connector.imap_host
+        if not imap_host:
+            # IMAP не настроен — это допустимо (только отправка).
+            return {"ok": False, "error": None, "skipped": True}
+
+        imap_port = connector.imap_port or 993
+
+        try:
+            imap = aioimaplib.IMAP4_SSL(
+                host=imap_host, port=imap_port, timeout=self.TIMEOUT
+            )
+            await imap.wait_hello_from_server()
+            resp = await imap.login(username, password)
+            await imap.logout()
+            if resp.result != "OK":
+                return {"ok": False, "error": "логин отклонён сервером"}
+            return {"ok": True, "error": None}
+        except Exception as e:
+            logger.warning(
+                "Email IMAP test failed for connector %s: %s",
+                connector.id,
+                e,
+            )
+            return {"ok": False, "error": str(e)}
+
     async def chat_send_message(
         self,
         connector: "ChatConnector",
@@ -134,8 +247,16 @@ class EmailStrategy(ChatStrategyBase):
         smtp_encryption = connector.smtp_encryption or "starttls"
         username = connector.email_username
         password = connector.email_password
-        # email_from fallback to email_username (90% случаев одинаковые)
-        email_from = connector.email_from or connector.email_username
+        # From-адрес: приоритет у outbox-аккаунта (user_from.external_id).
+        # В письме «от кого» — кастомное поле, не привязанное к реальному
+        # отправителю-сотруднику: SMTP-логин остаётся email_username, а From
+        # берётся из outbox account. Фолбэк: email_from → email_username.
+        outbox_from = (
+            getattr(user_from, "external_id", None) if user_from else None
+        )
+        email_from = (
+            outbox_from or connector.email_from or connector.email_username
+        )
         email_from_name = connector.email_from_name or ""
 
         if not all([smtp_host, username, password, email_from]):
@@ -218,8 +339,16 @@ class EmailStrategy(ChatStrategyBase):
         smtp_encryption = connector.smtp_encryption or "starttls"
         username = connector.email_username
         password = connector.email_password
-        # email_from fallback to email_username (90% случаев одинаковые)
-        email_from = connector.email_from or connector.email_username
+        # From-адрес: приоритет у outbox-аккаунта (user_from.external_id).
+        # В письме «от кого» — кастомное поле, не привязанное к реальному
+        # отправителю-сотруднику: SMTP-логин остаётся email_username, а From
+        # берётся из outbox account. Фолбэк: email_from → email_username.
+        outbox_from = (
+            getattr(user_from, "external_id", None) if user_from else None
+        )
+        email_from = (
+            outbox_from or connector.email_from or connector.email_username
+        )
         email_from_name = connector.email_from_name or ""
 
         if not all([smtp_host, username, password, email_from]):

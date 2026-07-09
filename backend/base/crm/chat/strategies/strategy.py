@@ -41,6 +41,13 @@ class ChatStrategyBase(ABC):
     # Уникальный тип стратегии (должен совпадать с connector.type)
     strategy_type: str = ""
 
+    # Нужен ли коннектору outbox-аккаунт (chat_external_account) для отправки.
+    # Для большинства провайдеров (Telegram, Avito, WhatsApp) — да: исходящие
+    # идут «от» конкретного внешнего аккаунта, и send_outgoing_message без него
+    # молча ничего не шлёт. Email адресуется своими полями (email_from/
+    # email_username), внешний аккаунт ему не нужен — стратегия ставит False.
+    requires_outbox_account: bool = True
+
     # ========================================================================
     # Абстрактные методы - должны быть реализованы в каждой стратегии
     # ========================================================================
@@ -843,6 +850,26 @@ class ChatStrategyBase(ABC):
             f"get_self_account_id not supported for {self.strategy_type}"
         )
 
+    async def test_connection(self, connector: "ChatConnector") -> dict:
+        """
+        Проверить соединение с внешним сервисом по текущим настройкам.
+
+        Конкретные стратегии (например Email — SMTP/IMAP логин)
+        переопределяют. Возвращает словарь вида:
+            {"ok": bool, "message": str, "details": {...}}
+
+        База не умеет проверять соединение универсально, поэтому по
+        умолчанию сообщает, что проверка для типа не поддерживается.
+        """
+        return {
+            "ok": False,
+            "message": (
+                f"Проверка соединения не поддерживается для "
+                f"типа '{self.strategy_type}'"
+            ),
+            "details": {},
+        }
+
     async def chat_send_message_binary(
         self,
         connector: "ChatConnector",
@@ -1018,7 +1045,14 @@ class ChatStrategyBase(ABC):
             #     )
             #     return False
 
-            if connector_id.outbox_account_id:
+            # Отправляем, если есть outbox-аккаунт ИЛИ стратегия его не требует
+            # (email адресуется своими полями). Раньше здесь стоял голый
+            # `if connector_id.outbox_account_id:` — у email он всегда None
+            # (external_account_id не заполняется), поэтому весь блок отправки
+            # пропускался, функция возвращала None, а сообщение оставалось
+            # внутренним. Именно поэтому письмо «не уходило».
+            outbox = connector_id.outbox_account_id
+            if outbox or not self.requires_outbox_account:
                 external_msg_id = None
 
                 # Отправляем вложения
@@ -1031,7 +1065,7 @@ class ChatStrategyBase(ABC):
                             #     continue
                             file_msg_id = await self.chat_send_message_binary(
                                 connector_id,
-                                connector_id.outbox_account_id,
+                                outbox,
                                 external_chat_id,
                                 att,
                             )
@@ -1056,7 +1090,7 @@ class ChatStrategyBase(ABC):
                     text_msg_id, conversation_key = (
                         await self.chat_send_message(
                             connector=connector_id,
-                            user_from=connector_id.outbox_account_id,
+                            user_from=outbox,
                             body=body,
                             chat_id=external_chat_id,
                         )

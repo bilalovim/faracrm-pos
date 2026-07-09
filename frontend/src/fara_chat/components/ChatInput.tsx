@@ -31,7 +31,15 @@ import {
 import type { GalleryItem } from '@/components/Attachment';
 import { EmojiPicker } from './EmojiPicker';
 import { ConnectorSwitcher, ConnectorOption } from './ConnectorSwitcher';
+import { EmailRichInput } from './EmailRichInput';
 import styles from './ChatInput.module.css';
+
+/** Достать простой текст из HTML — для проверки «пусто ли письмо». */
+function htmlToPlainText(html: string): string {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return div.textContent || div.innerText || '';
+}
 
 interface AttachmentFile {
   name: string;
@@ -71,6 +79,8 @@ export function ChatInput({
 }: ChatInputProps) {
   const { t } = useTranslation('chat');
   const [message, setMessage] = useState('');
+  // Ключ для ремонта rich-редактора письма после отправки (очистка контента).
+  const [composerKey, setComposerKey] = useState(0);
   const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
   const [emojiOpened, setEmojiOpened] = useState(false);
   const [galleryOpened, setGalleryOpened] = useState(false);
@@ -95,8 +105,21 @@ export function ChatInput({
   // Счётчик для сброса VoiceRecorder после отправки
   const [voiceResetKey, setVoiceResetKey] = useState(0);
 
+  // Выбран ли email-коннектор — тогда показываем rich-редактор письма
+  // (более высокое поле + форматирование), а не однострочный ввод.
+  const selectedConnector = connectors?.find(
+    c => c.connector_id === connectorId,
+  );
+  const isEmail = selectedConnector?.connector_type === 'email';
+
+  // Есть ли что отправлять (для email проверяем текст письма без HTML-тегов).
+  const hasText = isEmail
+    ? htmlToPlainText(message).trim().length > 0
+    : message.trim().length > 0;
+
   const handleSend = useCallback(async () => {
-    const trimmedMessage = message.trim();
+    // Для письма тело — HTML; иначе обычный текст.
+    const plain = isEmail ? htmlToPlainText(message).trim() : message.trim();
 
     // Отправка голосового сообщения
     if (pendingVoice) {
@@ -119,13 +142,16 @@ export function ChatInput({
       return;
     }
 
-    // Обычное сообщение
-    if ((!trimmedMessage && attachments.length === 0) || disabled) return;
+    // Обычное сообщение / письмо
+    if ((!plain && attachments.length === 0) || disabled) return;
+
+    // Для email шлём HTML (message), для остального — plain-текст.
+    const bodyToSend = isEmail ? (plain ? message : ' ') : plain || ' ';
 
     try {
       await sendMessage({
         chatId,
-        body: trimmedMessage || ' ',
+        body: bodyToSend,
         connector_id: connectorId,
         currentUserId,
         currentUserName,
@@ -141,6 +167,7 @@ export function ChatInput({
       }).unwrap();
 
       setMessage('');
+      setComposerKey(k => k + 1); // очистить rich-редактор письма
       setAttachments([]);
       inputRef.current?.focus();
       onMessageSent?.();
@@ -149,6 +176,7 @@ export function ChatInput({
     }
   }, [
     message,
+    isEmail,
     attachments,
     pendingVoice,
     chatId,
@@ -351,7 +379,10 @@ export function ChatInput({
         )}
       </FileButton>
 
-      <Group gap="xs" wrap="nowrap">
+      <Group
+        gap="xs"
+        wrap="nowrap"
+        align={isEmail ? 'flex-end' : 'center'}>
         <Menu position="top-start" withArrow>
           <Menu.Target>
             <ActionIcon
@@ -376,49 +407,65 @@ export function ChatInput({
           </Menu.Dropdown>
         </Menu>
 
-        <TextInput
-          ref={inputRef}
-          className={styles.input}
-          placeholder={t('typeMessage')}
-          value={message}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          disabled={disabled}
-          rightSection={
-            <Popover
-              opened={emojiOpened}
-              onChange={setEmojiOpened}
-              position="top-end"
-              withArrow
-              shadow="md">
-              <Popover.Target>
-                <ActionIcon
-                  variant="subtle"
-                  size="sm"
-                  disabled={disabled}
-                  title={t('emoji')}
-                  onClick={() => setEmojiOpened(o => !o)}>
-                  <IconMoodSmile size={18} />
-                </ActionIcon>
-              </Popover.Target>
-              <Popover.Dropdown p={0}>
-                <EmojiPicker onSelect={handleEmojiSelect} />
-              </Popover.Dropdown>
-            </Popover>
-          }
-        />
+        {isEmail ? (
+          // Письмо — rich-редактор (жирный/курсив/подчёркивание/списки).
+          // key=composerKey ремонтит редактор после отправки для очистки.
+          // Enter = перенос строки, Ctrl/Cmd+Enter = отправка.
+          <EmailRichInput
+            key={composerKey}
+            initialHtml={message}
+            onChange={setMessage}
+            onSend={handleSend}
+            disabled={disabled}
+          />
+        ) : (
+          <TextInput
+            ref={inputRef}
+            className={styles.input}
+            placeholder={t('typeMessage')}
+            value={message}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            disabled={disabled}
+            rightSection={
+              <Popover
+                opened={emojiOpened}
+                onChange={setEmojiOpened}
+                position="top-end"
+                withArrow
+                shadow="md">
+                <Popover.Target>
+                  <ActionIcon
+                    variant="subtle"
+                    size="sm"
+                    disabled={disabled}
+                    title={t('emoji')}
+                    onClick={() => setEmojiOpened(o => !o)}>
+                    <IconMoodSmile size={18} />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown p={0}>
+                  <EmojiPicker onSelect={handleEmojiSelect} />
+                </Popover.Dropdown>
+              </Popover>
+            }
+          />
+        )}
 
-        <VoiceRecorder
-          key={voiceResetKey}
-          onRecorded={handleVoiceRecorded}
-          onRecordingReady={setPendingVoice}
-          onCancel={() => {
-            setIsRecording(false);
-            setPendingVoice(null);
-          }}
-          disabled={disabled || attachments.length > 0}
-          showSendButton={false}
-        />
+        {/* Голосовое — только для обычного ввода (не для писем) */}
+        {!isEmail && (
+          <VoiceRecorder
+            key={voiceResetKey}
+            onRecorded={handleVoiceRecorded}
+            onRecordingReady={setPendingVoice}
+            onCancel={() => {
+              setIsRecording(false);
+              setPendingVoice(null);
+            }}
+            disabled={disabled || attachments.length > 0}
+            showSendButton={false}
+          />
+        )}
 
         {/* Переключатель коннектора */}
         {connectors && connectors.length > 1 && onConnectorSelect && (
@@ -436,7 +483,7 @@ export function ChatInput({
             size="lg"
             onClick={handleSend}
             disabled={
-              (!message.trim() && attachments.length === 0 && !pendingVoice) ||
+              (!hasText && attachments.length === 0 && !pendingVoice) ||
               disabled
             }>
             <IconSend size={18} />
