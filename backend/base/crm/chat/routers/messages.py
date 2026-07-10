@@ -172,6 +172,7 @@ async def get_messages(
             "is_read": computed_is_read,
             "parent_id": msg.parent_id,
             "connector_id": msg.connector_id,
+            "connector_type": msg.connector_type,
             "author": format_message_author(msg),
             "attachments": attachments_by_message.get(msg.id, []),
             "reactions": format_reactions(msg.id),
@@ -361,16 +362,6 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
             if not connector.active:
                 return False
 
-            # Письмо в чате рендерится как HTML (EmailMessageContent на фронте
-            # по message_type == 'email'). Обычные сообщения — plain-текст,
-            # поэтому исходящее через email-коннектор помечаем типом 'email',
-            # иначе наш HTML показался бы сырыми тегами.
-            if connector.type == "email" and message.message_type != "email":
-                await message.update(
-                    env.models.chat_message(message_type="email")
-                )
-                message.message_type = "email"
-
             # Собираем recipients_ids - контакты партнёров чата,
             # которые подходят под тип коннектора
             # Используем contact_type_id коннектора (integer FK)
@@ -454,6 +445,7 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
                     "id": message.id,
                     "body": message.body,
                     "message_type": message.message_type or "comment",
+                    "connector_type": message.connector_type,
                     "author": {
                         "id": user_id,
                         "name": auth_session.user_id.name,

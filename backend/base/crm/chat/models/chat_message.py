@@ -123,6 +123,17 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
         description="Коннектор, через который отправлено/получено сообщение",
     )
 
+    # Денормализованный тип коннектора (email/telegram/internal/...).
+    # Проставляется при создании из connector.type. По нему фронт понимает
+    # канал сообщения (email → HTML-рендер) без join на коннектор и без
+    # костыля «пометить message_type='email'». Null, если коннектора нет.
+    connector_type: str | None = Char(
+        max_length=50,
+        index=True,
+        description="Тип коннектора сообщения (денормализовано из "
+        "connector.type)",
+    )
+
     # Внешние сообщения (one2many связь)
     external_message_ids: list["ChatExternalMessage"] = One2many(
         store=False,
@@ -219,8 +230,18 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
             author_partner = env.models.partner(id=author_partner_id)
 
         connector = None
+        # connector_type денормализуем в сообщение при создании — чтобы фронт
+        # знал канал (email → HTML) без join и без пометки message_type.
+        # Грузим тип отдельным лёгким SELECT: у connector здесь только id.
+        connector_type = None
         if connector_id:
             connector = env.models.chat_connector(id=connector_id)
+            _conn = await env.models.chat_connector.search(
+                filter=[("id", "=", connector_id)],
+                fields=["id", "type"],
+                limit=1,
+            )
+            connector_type = _conn[0].type if _conn else None
 
         parent = None
         if parent_id:
@@ -234,6 +255,7 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
             author_user_id=author,
             author_partner_id=author_partner,
             connector_id=connector,
+            connector_type=connector_type,
             parent_id=parent,
             create_datetime=now,
             update_datetime=now,
@@ -301,6 +323,7 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
                 "is_deleted",
                 "parent_id",
                 "connector_id",
+                "connector_type",
                 "call_direction",
                 "call_disposition",
                 "call_duration",

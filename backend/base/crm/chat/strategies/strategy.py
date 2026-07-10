@@ -352,16 +352,15 @@ class ChatStrategyBase(ABC):
             # поэтому автор — системный пользователь («магазин»).
             author_user_id = SYSTEM_USER_ID
 
-        # 4. Создаём сообщение
-        # Для email коннектора используем message_type="email"
-        message_type = "email" if connector.type == "email" else "comment"
-
+        # 4. Создаём сообщение. Вид — обычный comment; канал несёт
+        # connector_type (проставляется в post_message из connector.type).
+        # Рендер письма (HTML) на фронте — по connector_type, без костыля
+        # message_type='email'.
         message = await env.models.chat_message.post_message(
             chat_id=chat_id,
             author_user_id=author_user_id,
             author_partner_id=author_partner_id,
             body=adapter.text or "",
-            message_type=message_type,
             connector_id=connector.id,
         )
 

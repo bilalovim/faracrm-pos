@@ -66,7 +66,12 @@ function getMessagePreview(
     return `📞 ${t('call', { defaultValue: 'Звонок' })}`;
   }
   if (!lastMessage.body) return null;
-  if (lastMessage.message_type === 'email') {
+  // Письмо: превью — текст без HTML-тегов. Канал в connector_type; старые
+  // письма несли message_type==='email' — оставлен фолбэк.
+  if (
+    lastMessage.connector_type === 'email' ||
+    lastMessage.message_type === 'email'
+  ) {
     return stripHtml(lastMessage.body);
   }
   if (lastMessage.message_type === 'system') {

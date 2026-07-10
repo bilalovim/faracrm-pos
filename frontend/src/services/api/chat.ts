@@ -647,6 +647,9 @@ export interface ChatLastMessage {
   author_id: number;
   create_datetime?: string;
   message_type: 'comment' | 'notification' | 'system' | 'email' | 'call';
+  // Канал сообщения (email/telegram/...). Для email-превью проверяем его;
+  // старые письма несли message_type='email' — оставлен как фолбэк.
+  connector_type?: string;
 }
 
 export interface ChatConnector {

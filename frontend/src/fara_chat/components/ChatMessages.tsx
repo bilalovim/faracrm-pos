@@ -58,6 +58,16 @@ import { CallMessageContent } from './CallMessageContent';
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👏'];
 
+/**
+ * Письмо ли это (рендерить HTML через EmailMessageContent).
+ * Канал сообщения — connector_type. Старые письма (до разведения осей) несли
+ * message_type==='email' — проверяем оба признака для обратной совместимости.
+ */
+const isEmailMessage = (m: {
+  connector_type?: string;
+  message_type?: string;
+}): boolean => m.connector_type === 'email' || m.message_type === 'email';
+
 interface ChatMessagesProps {
   chat: Chat;
   currentUserId: number;
@@ -585,9 +595,9 @@ export function ChatMessages({
                        пустым при проблемах парсинга. */}
                     {(message.body?.trim() ||
                       message.message_type === 'call' ||
-                      message.message_type === 'email') && (
+                      isEmailMessage(message)) && (
                       <Paper
-                        className={`${styles.messageBubble} ${isOwnMessage(message) ? styles.own : styles.other} ${message.message_type === 'email' ? styles.emailBubble : ''}`}
+                        className={`${styles.messageBubble} ${isOwnMessage(message) ? styles.own : styles.other} ${isEmailMessage(message) ? styles.emailBubble : ''}`}
                         onContextMenu={e => handleContextMenu(e, message)}
                         style={{ position: 'relative' }}>
                         {/* Pin иконка на текстовом bubble */}
@@ -610,7 +620,7 @@ export function ChatMessages({
                             callEndTime={message.call_end_time}
                             connectorType={message.connector_type}
                           />
-                        ) : message.message_type === 'email' ? (
+                        ) : isEmailMessage(message) ? (
                           <EmailMessageContent body={message.body} />
                         ) : (
                           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
