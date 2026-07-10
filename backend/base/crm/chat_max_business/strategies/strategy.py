@@ -41,9 +41,8 @@ class MaxBusinessStrategy(ChatStrategyBase):
     ВНИМАНИЕ: метод «отправка по номеру телефона» официального бизнес-API на
     момент написания гейтован бизнес-верификацией (GA «MAX для бизнеса» —
     I кв. 2026) и публично не специфицирован. Отправка реализована на общих
-    конвенциях platform-api.max.ru (POST /messages с адресацией phone/chat_id);
-    точный параметр/эндпоинт подтвердить в кабинете после верификации —
-    см. _recipient_params().
+    конвенциях platform-api.max.ru (POST /messages?phone=<E.164>, write-first);
+    точный параметр/эндпоинт подтвердить в кабинете после верификации.
 
     Документация: https://dev.max.ru/docs-api
     """
@@ -78,22 +77,17 @@ class MaxBusinessStrategy(ChatStrategyBase):
         return {"Authorization": connector.access_token or ""}
 
     @staticmethod
-    def _recipient_params(value: Any) -> dict:
+    def _recipient_digits(value: Any) -> str:
         """
-        Параметры адресации получателя для POST /messages.
+        Цифры номера получателя (без формата).
 
-        Бизнес-канал адресует по НОМЕРУ ТЕЛЕФОНА (write-first). Эвристика:
-        если значение похоже на телефон (10–15 цифр, без ведущего '-') —
-        шлём по ?phone=, иначе считаем это chat_id существующей переписки.
-
-        TODO(business): подтвердить точный параметр отправки по номеру в
-        официальной доке/кабинете после бизнес-верификации.
+        Бизнес-канал адресует по номеру телефона (write-first). На провод номер
+        уходит в E.164 (`+<digits>`), а этими же цифрами (без «+») ключуется
+        переписка — чтобы совпасть с ключом входящего webhook
+        (adapter.sender_phone тоже отдаёт digits), иначе ответ клиента создаст
+        второй чат.
         """
-        raw = str(value or "").strip()
-        digits = re.sub(r"\D", "", raw)
-        if not raw.startswith("-") and 10 <= len(digits) <= 15:
-            return {"phone": digits}
-        return {"chat_id": raw}
+        return re.sub(r"\D", "", str(value or ""))
 
     @staticmethod
     def _parse(response: httpx.Response, action: str) -> dict:
@@ -216,10 +210,10 @@ class MaxBusinessStrategy(ChatStrategyBase):
         clean_text = re.sub(r"<[^>]+>", "", body or "")
 
         url = self._api_url(connector, "messages")
-        params = self._recipient_params(chat_id)
-        # Канонический ключ переписки (цифры телефона или chat_id) — его же
-        # вернём как external_chat_id, чтобы совпасть с ключом из webhook.
-        key = params.get("phone") or params.get("chat_id") or str(chat_id)
+        # На провод — E.164 (+digits); ключ переписки — те же цифры (без «+»).
+        digits = self._recipient_digits(chat_id)
+        params = {"phone": "+" + digits}
+        key = digits
 
         # Лог запроса (без Authorization) — видеть, что именно уходит в MAX:
         # эндпоинт, параметры адресации (phone/chat_id) и текст.
@@ -254,7 +248,7 @@ class MaxBusinessStrategy(ChatStrategyBase):
         """
         Отправить файл/изображение (официальные uploads, как в Bot API):
         POST /uploads?type=... -> залить бинарь -> POST /messages с attachments.
-        Адресация — по номеру/chat_id (см. _recipient_params).
+        Адресация — по номеру (E.164), см. _recipient_digits.
         """
         if not chat_id:
             raise ValueError("Cannot send MAX business file without recipient")
@@ -273,8 +267,9 @@ class MaxBusinessStrategy(ChatStrategyBase):
         )
 
         url = self._api_url(connector, "messages")
-        params = self._recipient_params(chat_id)
-        key = params.get("phone") or params.get("chat_id") or str(chat_id)
+        digits = self._recipient_digits(chat_id)
+        params = {"phone": "+" + digits}
+        key = digits
         message_body = {
             "attachments": [{"type": att_type, "payload": payload}]
         }
