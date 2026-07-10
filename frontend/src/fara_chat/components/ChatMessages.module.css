@@ -83,9 +83,37 @@
   color: var(--mantine-color-dark-9);
 }
 
+/* Email-бабл своих сообщений — светлый (blue-1), поэтому текст и статусы
+   должны быть ТЁМНЫМИ. Иначе правило `.messageBubble.own .mantine-Text-root
+   { color: white }` красит тему письма и время белым → не видно на светлом
+   фоне, а белая галочка прочтения сливается. Перебиваем на тёмный. */
+.emailBubble.own .mantine-Text-root {
+  color: var(--mantine-color-dark-9);
+}
+
+.emailBubble.own .readIcon {
+  color: var(--mantine-color-dark-9);
+}
+
+.emailBubble.own .deliveredIcon {
+  color: var(--mantine-color-gray-6);
+}
+
 [data-mantine-color-scheme='dark'] .emailBubble.own {
   background-color: var(--mantine-color-dark-6);
   color: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme='dark'] .emailBubble.own .mantine-Text-root {
+  color: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme='dark'] .emailBubble.own .readIcon {
+  color: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme='dark'] .emailBubble.own .deliveredIcon {
+  color: var(--mantine-color-gray-5);
 }
 
 .attachmentsContainer {

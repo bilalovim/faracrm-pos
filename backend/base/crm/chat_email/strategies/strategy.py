@@ -1,6 +1,7 @@
 # Copyright 2025 FARA CRM
 # Chat module - Email strategy (SMTP/IMAP)
 
+import json
 import logging
 import re
 import uuid
@@ -26,6 +27,29 @@ if TYPE_CHECKING:
     from backend.base.crm.attachments.models.attachments import Attachment
 
 logger = logging.getLogger(__name__)
+
+
+def parse_email_body(body: str | None) -> tuple[str | None, str]:
+    """
+    Разобрать «email-формат» тела сообщения.
+
+    Email хранит в body свой формат — JSON {"subject": "...", "html": "..."}
+    (по аналогии с тем, как system-сообщение хранит {event, params}). Это
+    позволяет не тащить subject отдельным параметром через общие методы
+    отправки — тема едет внутри body, а парсит её только email-код.
+
+    Возвращает (subject, html). Фолбэк для старых писем / чужого формата:
+    если body не наш JSON — тема None, html = сам body (как раньше).
+    """
+    if not body:
+        return None, ""
+    try:
+        data = json.loads(body)
+        if isinstance(data, dict) and ("html" in data or "subject" in data):
+            return data.get("subject"), data.get("html") or ""
+    except (ValueError, TypeError):
+        pass
+    return None, body
 
 
 class EmailStrategy(ChatStrategyBase):
@@ -235,28 +259,28 @@ class EmailStrategy(ChatStrategyBase):
         Args:
             connector: Коннектор Email
             user_from: Аккаунт отправителя
-            body: HTML или текст сообщения
+            body: email-формат {"subject","html"} (парсится ниже)
             chat_id: Email получателя (используется как chat_id)
             recipients_ids: Список email получателей
 
         Returns:
             Tuple[message_id, recipient_email]
         """
+        # Тема и HTML едут внутри body (email-формат), а не отдельным
+        # параметром — см. parse_email_body.
+        subject, html = parse_email_body(body)
+
         smtp_host = connector.smtp_host
         smtp_port = connector.smtp_port or 587
         smtp_encryption = connector.smtp_encryption or "starttls"
         username = connector.email_username
         password = connector.email_password
-        # From-адрес: приоритет у outbox-аккаунта (user_from.external_id).
-        # В письме «от кого» — кастомное поле, не привязанное к реальному
-        # отправителю-сотруднику: SMTP-логин остаётся email_username, а From
-        # берётся из outbox account. Фолбэк: email_from → email_username.
-        outbox_from = (
-            getattr(user_from, "external_id", None) if user_from else None
-        )
-        email_from = (
-            outbox_from or connector.email_from or connector.email_username
-        )
+        # From-адрес: ПО УМОЛЧАНИЮ = логин учётных данных (email_username).
+        # Иначе Gmail и большинство SMTP блокируют письмо с «чужим» From,
+        # не совпадающим с аутентифицированным ящиком. Если у коннектора задан
+        # outbox-аккаунт (chat_external_account) — берём его адрес (санкц. алиас).
+        outbox_from = user_from.external_id if user_from else None
+        email_from = outbox_from or connector.email_username
         email_from_name = connector.email_from_name or ""
 
         if not all([smtp_host, username, password, email_from]):
@@ -274,8 +298,12 @@ class EmailStrategy(ChatStrategyBase):
 
         # Создаём сообщение
         msg = MIMEMultipart("alternative")
+        # Subject: тема из body-формата (задаётся в виджете письма, дефолт —
+        # имя чата) → email_default_subject коннектора → заглушка.
         msg["Subject"] = (
-            connector.email_default_subject or "Message from FARA CRM"
+            subject
+            or connector.email_default_subject
+            or "Message from FARA CRM"
         )
         msg["From"] = formataddr((email_from_name, email_from))
         msg["To"] = ", ".join(recipients)
@@ -287,13 +315,13 @@ class EmailStrategy(ChatStrategyBase):
         # Return-Path для bounce tracking
         msg["Return-Path"] = connector.email_bounce or email_from
 
-        # Добавляем текстовую и HTML версии
-        plain_text = re.sub(r"<[^>]+>", "", body)
+        # Добавляем текстовую и HTML версии (html из body-формата)
+        plain_text = re.sub(r"<[^>]+>", "", html)
         msg.attach(MIMEText(plain_text, "plain", "utf-8"))
 
-        # Если body содержит HTML теги, добавляем HTML версию
-        if "<" in body and ">" in body:
-            msg.attach(MIMEText(body, "html", "utf-8"))
+        # Если html содержит теги, добавляем HTML версию
+        if "<" in html and ">" in html:
+            msg.attach(MIMEText(html, "html", "utf-8"))
 
         # Генерируем Message-ID
         domain = email_from.split("@")[1] if "@" in email_from else "localhost"
@@ -339,16 +367,12 @@ class EmailStrategy(ChatStrategyBase):
         smtp_encryption = connector.smtp_encryption or "starttls"
         username = connector.email_username
         password = connector.email_password
-        # From-адрес: приоритет у outbox-аккаунта (user_from.external_id).
-        # В письме «от кого» — кастомное поле, не привязанное к реальному
-        # отправителю-сотруднику: SMTP-логин остаётся email_username, а From
-        # берётся из outbox account. Фолбэк: email_from → email_username.
-        outbox_from = (
-            getattr(user_from, "external_id", None) if user_from else None
-        )
-        email_from = (
-            outbox_from or connector.email_from or connector.email_username
-        )
+        # From-адрес: ПО УМОЛЧАНИЮ = логин учётных данных (email_username).
+        # Иначе Gmail и большинство SMTP блокируют письмо с «чужим» From,
+        # не совпадающим с аутентифицированным ящиком. Если у коннектора задан
+        # outbox-аккаунт (chat_external_account) — берём его адрес (санкц. алиас).
+        outbox_from = user_from.external_id if user_from else None
+        email_from = outbox_from or connector.email_username
         email_from_name = connector.email_from_name or ""
 
         if not all([smtp_host, username, password, email_from]):

@@ -71,6 +71,19 @@ class ChatMessageAdapter:
         raise NotImplementedError()
 
     @property
+    def serialized_body(self) -> str:
+        """
+        Тело сообщения, сериализованное для хранения в chat_message.body.
+
+        По умолчанию — обычный текст. Провайдеры со своим форматом тела
+        переопределяют: например Email сериализует {subject, html} в JSON
+        (обратная операция — parse_email_body в email-стратегии). Так формат
+        живёт целиком в адаптере провайдера, а вызывающий код (обработка
+        входящих) единообразно берёт adapter.serialized_body без ветвлений.
+        """
+        return self.text or ""
+
+    @property
     def images(self) -> list[str]:
         """Список URL изображений или объектов с file_id."""
         return []

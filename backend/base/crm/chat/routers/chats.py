@@ -2,6 +2,7 @@
 # Chat module - chats router
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -991,3 +992,44 @@ async def get_chat_connectors(req: Request, chat_id: int):
 
     connectors = await chat.get_available_connectors(current_user_id=user_id)
     return {"data": connectors}
+
+
+@router_private.get("/chats/{chat_id}/email-subject")
+async def get_chat_email_subject(req: Request, chat_id: int):
+    """
+    Тема письма по умолчанию для виджета email.
+
+    Правило: если в чате уже есть сообщение с темой (последнее письмо) —
+    берём его тему (продолжение переписки). Иначе — имя чата. Пользователь
+    в виджете может переопределить.
+    """
+    env: "Environment" = req.app.state.env
+
+    # Проверка членства — через rule "@is_member" (RecordNotFound не-участнику).
+    chat = await env.models.chat.get(chat_id, fields=["id", "name"])
+
+    # Тема хранится внутри body последнего письма (email-формат
+    # {subject, html}), поэтому берём body последнего email-сообщения и
+    # парсим тему. Если писем нет — имя чата.
+    last = await env.models.chat_message.search(
+        filter=[
+            ("chat_id", "=", chat_id),
+            ("connector_type", "=", "email"),
+            ("is_deleted", "=", False),
+        ],
+        fields=["id", "body"],
+        sort="id",
+        order="DESC",
+        limit=1,
+    )
+
+    subject = None
+    if last and last[0].body:
+        try:
+            data = json.loads(last[0].body)
+            if isinstance(data, dict):
+                subject = data.get("subject")
+        except (ValueError, TypeError):
+            subject = None
+
+    return {"data": {"subject": subject or chat.name or ""}}

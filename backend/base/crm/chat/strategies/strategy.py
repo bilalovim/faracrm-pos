@@ -356,11 +356,14 @@ class ChatStrategyBase(ABC):
         # connector_type (проставляется в post_message из connector.type).
         # Рендер письма (HTML) на фронте — по connector_type, без костыля
         # message_type='email'.
+        # Тело для хранения: адаптер сам сериализует своё сообщение. Email
+        # упаковывает {"subject","html"} (свой формат, как system хранит JSON);
+        # прочие адаптеры отдают текст (дефолт ChatMessageAdapter.serialized_body).
         message = await env.models.chat_message.post_message(
             chat_id=chat_id,
             author_user_id=author_user_id,
             author_partner_id=author_partner_id,
-            body=adapter.text or "",
+            body=adapter.serialized_body,
             connector_id=connector.id,
         )
 

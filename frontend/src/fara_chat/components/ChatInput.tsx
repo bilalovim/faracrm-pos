@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Box,
   TextInput,
@@ -20,7 +20,10 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
-import { useSendMessageMutation } from '@/services/api/chat';
+import {
+  useSendMessageMutation,
+  useGetChatEmailSubjectQuery,
+} from '@/services/api/chat';
 import {
   AttachmentPreview,
   ImageGalleryModal,
@@ -79,6 +82,9 @@ export function ChatInput({
 }: ChatInputProps) {
   const { t } = useTranslation('chat');
   const [message, setMessage] = useState('');
+  // Тема письма (для email). Дефолт подтягивается из ручки (имя чата или тема
+  // последнего письма); пользователь может переопределить.
+  const [subject, setSubject] = useState('');
   // Ключ для ремонта rich-редактора письма после отправки (очистка контента).
   const [composerKey, setComposerKey] = useState(0);
   const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
@@ -111,6 +117,24 @@ export function ChatInput({
     c => c.connector_id === connectorId,
   );
   const isEmail = selectedConnector?.connector_type === 'email';
+  // Тип коннектора для оптимистик-рендера (email → HTML сразу).
+  const selectedConnectorType = selectedConnector?.connector_type;
+
+  // Дефолтная тема письма (имя чата / тема последнего письма). Грузим только
+  // для email. Подставляем в поле при смене чата/появлении данных; правки
+  // пользователя не затираем, т.к. без инвалидации ручка не перезапрашивается.
+  const { data: emailSubjectData } = useGetChatEmailSubjectQuery(
+    { chatId },
+    { skip: !isEmail },
+  );
+  const defaultSubject = emailSubjectData?.data?.subject;
+  useEffect(() => {
+    if (isEmail && defaultSubject !== undefined) {
+      setSubject(defaultSubject);
+    }
+    // Сбрасываем к дефолту при смене чата и при первой загрузке данных.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, defaultSubject, isEmail]);
 
   // Есть ли что отправлять (для email проверяем текст письма без HTML-тегов).
   const hasText = isEmail
@@ -128,6 +152,7 @@ export function ChatInput({
           chatId,
           body: ' ',
           connector_id: connectorId,
+          connector_type: selectedConnectorType,
           currentUserId,
           currentUserName,
           attachments: [pendingVoice],
@@ -145,14 +170,18 @@ export function ChatInput({
     // Обычное сообщение / письмо
     if ((!plain && attachments.length === 0) || disabled) return;
 
-    // Для email шлём HTML (message), для остального — plain-текст.
-    const bodyToSend = isEmail ? (plain ? message : ' ') : plain || ' ';
+    // Для email тело — «email-формат» {subject, html} (тема едет внутри body,
+    // как system хранит JSON). Для остального — обычный plain-текст.
+    const bodyToSend = isEmail
+      ? JSON.stringify({ subject: subject.trim(), html: plain ? message : '' })
+      : plain || ' ';
 
     try {
       await sendMessage({
         chatId,
         body: bodyToSend,
         connector_id: connectorId,
+        connector_type: selectedConnectorType,
         currentUserId,
         currentUserName,
         attachments:
@@ -186,6 +215,8 @@ export function ChatInput({
     disabled,
     sendMessage,
     onMessageSent,
+    selectedConnectorType,
+    subject,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -281,6 +312,7 @@ export function ChatInput({
         chatId,
         body: '',
         connector_id: connectorId,
+        connector_type: selectedConnectorType,
         currentUserId,
         currentUserName,
         attachments: [voiceFile],
@@ -408,16 +440,26 @@ export function ChatInput({
         </Menu>
 
         {isEmail ? (
-          // Письмо — rich-редактор (жирный/курсив/подчёркивание/списки).
+          // Письмо — тема (хедер) + rich-редактор (жирный/курсив/списки).
           // key=composerKey ремонтит редактор после отправки для очистки.
           // Enter = перенос строки, Ctrl/Cmd+Enter = отправка.
-          <EmailRichInput
-            key={composerKey}
-            initialHtml={message}
-            onChange={setMessage}
-            onSend={handleSend}
-            disabled={disabled}
-          />
+          <Box style={{ flex: 1, minWidth: 0 }}>
+            <TextInput
+              value={subject}
+              onChange={e => setSubject(e.currentTarget.value)}
+              placeholder={t('emailSubject', 'Тема письма')}
+              disabled={disabled}
+              size="sm"
+              mb={6}
+            />
+            <EmailRichInput
+              key={composerKey}
+              initialHtml={message}
+              onChange={setMessage}
+              onSend={handleSend}
+              disabled={disabled}
+            />
+          </Box>
         ) : (
           <TextInput
             ref={inputRef}

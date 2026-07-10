@@ -20,11 +20,6 @@ const EMAIL_FIELDS = [
   'imap_ssl',
   'email_username',
   'email_password',
-  // Отправитель (From) — outbox-аккаунт. external_account_id при сохранении
-  // создаёт chat_external_account (см. ChatConnector._ensure_outbox_account),
-  // а его external_id становится From-адресом письма (email.strategy).
-  'external_account_id',
-  'email_from_name',
 ];
 
 /**
@@ -292,27 +287,10 @@ export function ViewFormConnectorEmail() {
         </Group>
       </FormSection>
 
-      {/* Отправитель (From) — outbox-аккаунт.
-          Для email «от кого» не зависит от реального отправителя-сотрудника:
-          это кастомный адрес. external_account_id при сохранении создаёт
-          outbox-аккаунт, чей external_id уходит в заголовок From. Если пусто —
-          From = email отправителя из «Учётных данных». */}
-      <FormSection
-        title={t('connector.groups.emailSender', 'Отправитель (From)')}
-        collapsible>
-        <FormRow cols={2}>
-          <FieldChar
-            name="external_account_id"
-            label={t('connector.fields.emailFrom', 'Email отправителя (From)')}
-            placeholder="noreply@company.com"
-          />
-          <FieldChar
-            name="email_from_name"
-            label={t('connector.fields.emailFromName', 'Имя отправителя')}
-            placeholder="Company Support"
-          />
-        </FormRow>
-      </FormSection>
+      {/* Полей «Отправитель (From)» нет намеренно: From по умолчанию берётся
+          из «Учётных данных» (email_username), иначе Gmail/SMTP блокируют
+          письмо с чужим From. Если у коннектора создан outbox-аккаунт —
+          отправка идёт от него (см. EmailStrategy.chat_send_message). */}
     </>
   );
 }

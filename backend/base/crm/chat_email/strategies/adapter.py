@@ -1,6 +1,7 @@
 # Copyright 2025 FARA CRM
 # Chat module - Email message adapter
 
+import json
 import re
 from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
@@ -182,6 +183,22 @@ class EmailMessageAdapter(ChatMessageAdapter):
             return None
 
         return sanitize_email_html(raw_html) if raw_html else None
+
+    @property
+    def serialized_body(self) -> str:
+        """
+        Тело для хранения в chat_message — «email-формат» {subject, html}
+        (по аналогии с system-сообщением, хранящим JSON {event, params}).
+        Так тема письма едет внутри body и парсится email-кодом, без
+        отдельного поля/параметра. Переопределяет ChatMessageAdapter.
+        Обратная операция — parse_email_body в strategy.py.
+        """
+        return json.dumps(
+            {
+                "subject": self.subject or "",
+                "html": self.html or self.text or "",
+            }
+        )
 
     def _get_email_body(self, prefer_html: bool = False) -> str:
         """Извлечь тело письма из email.message.Message."""

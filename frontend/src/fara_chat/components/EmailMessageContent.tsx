@@ -10,6 +10,23 @@ interface EmailMessageContentProps {
 }
 
 /**
+ * Разобрать «email-формат» тела: JSON {subject, html} (по аналогии с тем, как
+ * system хранит {event, params}). Фолбэк для старых писем — весь body как HTML.
+ */
+function parseEmailBody(body: string): { subject?: string; html: string } {
+  if (!body) return { html: '' };
+  try {
+    const data = JSON.parse(body);
+    if (data && typeof data === 'object' && ('html' in data || 'subject' in data)) {
+      return { subject: data.subject || undefined, html: data.html || '' };
+    }
+  } catch {
+    // не наш JSON — старый формат (plain HTML)
+  }
+  return { html: body };
+}
+
+/**
  * Компонент для безопасного отображения HTML email сообщений.
  * 
  * Особенности:
@@ -20,9 +37,12 @@ interface EmailMessageContentProps {
  * - Длинные сообщения сворачиваются
  */
 export function EmailMessageContent({ 
-  body, 
-  maxHeight = 300 
+  body,
+  maxHeight = 300
 }: EmailMessageContentProps) {
+  // Тема и HTML едут внутри body (email-формат); тему рисуем хедером.
+  const { subject, html } = useMemo(() => parseEmailBody(body), [body]);
+
   // Санитизация HTML
   const sanitizedHtml = useMemo(() => {
     // Настраиваем DOMPurify
@@ -43,8 +63,8 @@ export function EmailMessageContent({
       ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
     };
 
-    // Санитизируем
-    let clean = DOMPurify.sanitize(body, config);
+    // Санитизируем (html из email-формата)
+    let clean = DOMPurify.sanitize(html, config);
 
     // После санитизации модифицируем ссылки
     const div = document.createElement('div');
@@ -67,17 +87,19 @@ export function EmailMessageContent({
     });
 
     return div.innerHTML;
-  }, [body]);
+  }, [html]);
 
   // Проверяем, нужно ли сворачивание
-  const isLongContent = body.length > 1000;
+  const isLongContent = html.length > 1000;
 
   if (isLongContent) {
     return (
       <Box className={styles.emailContent}>
         <Box className={styles.emailHeader}>
           <IconMail size={14} />
-          <Text size="xs" c="dimmed">Email message</Text>
+          <Text size="xs" c="dimmed" fw={subject ? 600 : 400} lineClamp={1}>
+            {subject || 'Email message'}
+          </Text>
         </Box>
         <Spoiler 
           maxHeight={maxHeight} 

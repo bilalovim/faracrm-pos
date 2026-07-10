@@ -194,6 +194,14 @@ const chatApi = api.injectEndpoints({
       query: ({ chatId }) => `/chats/${chatId}/connectors`,
     }),
 
+    // Default email subject for a chat (last message subject or chat name)
+    getChatEmailSubject: build.query<
+      { data: { subject: string } },
+      { chatId: number }
+    >({
+      query: ({ chatId }) => `/chats/${chatId}/email-subject`,
+    }),
+
     // Get messages for a chat
     getChatMessages: build.query<GetMessagesResponse, GetMessagesArgs>({
       query: ({ chatId, limit, beforeId, includeDeleted }) => ({
@@ -214,7 +222,13 @@ const chatApi = api.injectEndpoints({
       SendMessageResponse,
       SendMessageArgs & { currentUserId?: number; currentUserName?: string }
     >({
-      query: ({ chatId, currentUserId, currentUserName, ...body }) => ({
+      query: ({
+        chatId,
+        currentUserId,
+        currentUserName,
+        connector_type,
+        ...body
+      }) => ({
         url: `/chats/${chatId}/messages`,
         method: 'POST',
         body,
@@ -232,7 +246,14 @@ const chatApi = api.injectEndpoints({
       ],
       // Optimistic update - immediately add message to cache
       async onQueryStarted(
-        { chatId, body, attachments, currentUserId, currentUserName },
+        {
+          chatId,
+          body,
+          attachments,
+          currentUserId,
+          currentUserName,
+          connector_type,
+        },
         { dispatch, queryFulfilled },
       ) {
         // Create optimistic message with temporary ID
@@ -242,6 +263,9 @@ const chatApi = api.injectEndpoints({
           id: tempId,
           body,
           message_type: 'comment',
+          // Канал — чтобы своё письмо сразу рисовалось как HTML (без мигания
+          // сырыми тегами до refetch). Для не-email просто undefined.
+          connector_type,
           create_datetime: createDate,
           author: currentUserId
             ? { id: currentUserId, name: currentUserName, type: 'user' }
@@ -804,6 +828,10 @@ export interface SendMessageArgs {
   chatId: number;
   body: string;
   connector_id?: number;
+  // Тип выбранного коннектора — только для оптимистик-рендера (email → HTML
+  // сразу, без мигания сырым HTML до refetch). В запрос НЕ уходит: бэк сам
+  // выводит connector_type из connector_id.
+  connector_type?: string;
   parent_id?: number;
   attachments?: SendMessageAttachment[];
 }
@@ -985,6 +1013,7 @@ export const {
   useLeaveChatMutation,
   useDeleteChatMutation,
   useGetChatConnectorsQuery,
+  useGetChatEmailSubjectQuery,
   useGetChatMessagesQuery,
   useSendMessageMutation,
   useMarkChatAsReadMutation,
