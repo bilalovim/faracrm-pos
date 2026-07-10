@@ -836,6 +836,20 @@ class ChatStrategyBase(ABC):
         """
         return {}
 
+    async def delete_webhook_by_url(
+        self, connector: "ChatConnector", webhook_url: str
+    ) -> Any:
+        """
+        Удалить webhook/подписку по произвольному URL.
+
+        Актуально для провайдеров, где подписок может быть несколько
+        (MAX: список /subscriptions) и надо почистить старые. Базовая
+        реализация не поддерживает — переопределяют конкретные стратегии.
+        """
+        raise NotImplementedError(
+            f"delete_webhook_by_url not supported for {self.strategy_type}"
+        )
+
     async def get_self_account_id(self, connector: "ChatConnector") -> dict:
         """
         Получить информацию об аккаунте от внешнего сервиса.

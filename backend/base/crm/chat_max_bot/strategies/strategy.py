@@ -33,7 +33,7 @@ class MaxBotStrategy(ChatStrategyBase):
 
     Требует настройки коннектора:
     - access_token: токен бота (выдаётся @MasterBot в MAX)
-    - connector_url: https://botapi.max.ru (по умолчанию)
+    - connector_url: https://platform-api.max.ru (по умолчанию)
     - webhook_url: URL для приёма обновлений (HTTPS обязателен)
     - external_account_id: user_id бота (можно получить кнопкой в форме —
       метод GET /me)
@@ -42,7 +42,10 @@ class MaxBotStrategy(ChatStrategyBase):
     """
 
     strategy_type = "max_bot"
-    BASE_API_URL = "https://botapi.max.ru"
+    # Домен MAX Bot API. Раньше — botapi.max.ru; унифицировано с бизнес-каналом
+    # на platform-api.max.ru (тот же Bot API). Переопределяется connector_url.
+    # Миграция на platform-api2.max.ru (+ серт Минцифры) — до 19.07.2026.
+    BASE_API_URL = "https://platform-api.max.ru"
     TIMEOUT = 30.0
     # Сколько раз повторить отправку вложения, если MAX ещё не обработал файл.
     UPLOAD_RETRY = 4
@@ -60,13 +63,16 @@ class MaxBotStrategy(ChatStrategyBase):
         """Сформировать URL метода API."""
         return f"{self._base_url(connector)}/{method.lstrip('/')}"
 
-    def _auth_params(self, connector: "ChatConnector", **extra: Any) -> dict:
-        """Параметры запроса с access_token (MAX принимает токен в query)."""
-        params: dict[str, Any] = {"access_token": connector.access_token or ""}
-        for key, value in extra.items():
-            if value is not None:
-                params[key] = value
-        return params
+    @staticmethod
+    def _headers(connector: "ChatConnector") -> dict:
+        """
+        Авторизация MAX API — заголовком `Authorization: <access_token>`.
+
+        Передача токена в query-параметрах официально больше не поддерживается
+        (см. dev.max.ru), поэтому токен идёт в заголовке для ВСЕХ вызовов, а в
+        query остаются только «нагрузочные» параметры (chat_id, url, type).
+        """
+        return {"Authorization": connector.access_token or ""}
 
     @staticmethod
     def _raise_for_error(response: httpx.Response, action: str) -> dict:
@@ -119,7 +125,7 @@ class MaxBotStrategy(ChatStrategyBase):
 
         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
             response = await client.post(
-                url, params=self._auth_params(connector), json=payload
+                url, headers=self._headers(connector), json=payload
             )
             self._raise_for_error(response, "setWebhook")
 
@@ -139,11 +145,39 @@ class MaxBotStrategy(ChatStrategyBase):
         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
             response = await client.delete(
                 url,
-                params=self._auth_params(connector, url=connector.webhook_url),
+                headers=self._headers(connector),
+                params={"url": connector.webhook_url},
             )
             result = self._raise_for_error(response, "deleteWebhook")
 
         logger.info("MAX webhook deleted for connector %s", connector.id)
+        return result
+
+    async def delete_webhook_by_url(
+        self, connector: "ChatConnector", webhook_url: str
+    ) -> Any:
+        """
+        Удалить подписку по ПРОИЗВОЛЬНОМУ url (не только текущему webhook_url).
+
+        Нужно для чистки старых/чужих подписок: MAX хранит подписки списком
+        (GET /subscriptions), а unset_webhook удаляет лишь connector.webhook_url.
+        MAX API: DELETE /subscriptions?url=<webhook_url>
+        """
+        url = self._api_url(connector, "subscriptions")
+
+        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+            response = await client.delete(
+                url,
+                headers=self._headers(connector),
+                params={"url": webhook_url},
+            )
+            result = self._raise_for_error(response, "deleteWebhookByUrl")
+
+        logger.info(
+            "MAX subscription %s deleted for connector %s",
+            webhook_url,
+            connector.id,
+        )
         return result
 
     async def get_webhook_info(self, connector: "ChatConnector") -> dict:
@@ -155,9 +189,7 @@ class MaxBotStrategy(ChatStrategyBase):
         url = self._api_url(connector, "subscriptions")
 
         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.get(
-                url, params=self._auth_params(connector)
-            )
+            response = await client.get(url, headers=self._headers(connector))
             return self._raise_for_error(response, "getSubscriptions")
 
     async def get_self_account_id(self, connector: "ChatConnector") -> dict:
@@ -169,9 +201,7 @@ class MaxBotStrategy(ChatStrategyBase):
         url = self._api_url(connector, "me")
 
         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.get(
-                url, params=self._auth_params(connector)
-            )
+            response = await client.get(url, headers=self._headers(connector))
             return self._raise_for_error(response, "getMe")
 
     # ========================================================================
@@ -215,7 +245,8 @@ class MaxBotStrategy(ChatStrategyBase):
         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
             response = await client.post(
                 url,
-                params=self._auth_params(connector, chat_id=chat_id),
+                headers=self._headers(connector),
+                params={"chat_id": chat_id},
                 json=payload,
             )
             result = self._raise_for_error(response, "sendMessage")
@@ -273,7 +304,8 @@ class MaxBotStrategy(ChatStrategyBase):
             for attempt in range(self.UPLOAD_RETRY):
                 response = await client.post(
                     url,
-                    params=self._auth_params(connector, chat_id=chat_id),
+                    headers=self._headers(connector),
+                    params={"chat_id": chat_id},
                     json=message_body,
                 )
                 if response.status_code < 400:
@@ -321,7 +353,8 @@ class MaxBotStrategy(ChatStrategyBase):
         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
             response = await client.post(
                 uploads_url,
-                params=self._auth_params(connector, type=att_type),
+                headers=self._headers(connector),
+                params={"type": att_type},
             )
             upload_info = self._raise_for_error(response, "uploads")
 

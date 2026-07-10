@@ -1,365 +1,98 @@
 # Copyright 2025 FARA CRM
-# Chat module - MAX official business API strategy (platform-api.max.ru)
+# Chat module - MAX "business" strategy.
+#
+# ВАЖНО (2026-07): у MAX НЕТ официального «бизнес»-канала с отправкой первым по
+# номеру телефона. platform-api.max.ru — это тот же MAX Bot API, что и
+# botapi.max.ru (коннектор max_bot): получатель адресуется по chat_id, который
+# приходит в вебхуке (событие bot_started / сообщение пользователя), отправка —
+# POST /messages?chat_id=…, приём и вложения — как в Bot API (см. dev.max.ru).
+# Прежняя реализация слала POST /messages?phone=<E.164> и получала
+# HTTP 400 «Unknown recipient» — такой адресации в API не существует.
+#
+# Поэтому max_business ТЕПЕРЬ НАСЛЕДУЕТ поведение max_bot целиком: отправка,
+# приём, вложения, вебхуки — одинаковые. Для клиента неважно, что он выбрал —
+# «бот» или «бизнес»: оба работают через один Bot API. Отличается только
+# strategy_type и (пока) домен по умолчанию. Старый phone-код закомментирован
+# внизу файла (полностью — в истории git).
 
-import asyncio
-import logging
-import re
-from typing import TYPE_CHECKING, Any, Tuple
-
-import httpx
-
-from backend.base.crm.chat.strategies.strategy import ChatStrategyBase
-from .adapter import MaxBusinessMessageAdapter
-
-if TYPE_CHECKING:
-    from backend.base.crm.chat.models.chat_connector import ChatConnector
-    from backend.base.crm.chat.models.chat_external_account import (
-        ChatExternalAccount,
-    )
-    from backend.base.crm.attachments.models.attachments import Attachment
-
-logger = logging.getLogger(__name__)
+from backend.base.crm.chat_max_bot.strategies.strategy import MaxBotStrategy
 
 
-class MaxBusinessStrategy(ChatStrategyBase):
+class MaxBusinessStrategy(MaxBotStrategy):
     """
-    Стратегия ОФИЦИАЛЬНОЙ бизнес-интеграции MAX (platform-api.max.ru).
+    «MAX для бизнеса» — по факту тот же MAX Bot API, что и max_bot.
 
-    Ключевое отличие от бот-канала (chat_max): верифицированный бизнес-аккаунт
-    может писать клиенту ПЕРВЫМ по номеру телефона — санкционировано
-    платформой. Webhook и объект Update — те же, что в Bot API.
+    Наследует всё поведение MaxBotStrategy (chat_id из вебхука, POST /messages,
+    /subscriptions, /uploads, скачивание вложений). Отличается только типом
+    коннектора и доменом по умолчанию, чтобы «бот» и «бизнес» вели себя
+    одинаково.
 
-    Настройки коннектора:
-    - access_token: токен бизнес-аккаунта (business.max.ru, после
-      верификации через Госуслуги/банк)
-    - connector_url: https://platform-api.max.ru (по умолчанию)
-    - webhook_url: устанавливается через POST /subscriptions (кнопка в форме)
-
-    Авторизация: заголовок Authorization со значением access_token.
-    Лимит платформы: до 30 rps.
-
-    ВНИМАНИЕ: метод «отправка по номеру телефона» официального бизнес-API на
-    момент написания гейтован бизнес-верификацией (GA «MAX для бизнеса» —
-    I кв. 2026) и публично не специфицирован. Отправка реализована на общих
-    конвенциях platform-api.max.ru (POST /messages?phone=<E.164>, write-first);
-    точный параметр/эндпоинт подтвердить в кабинете после верификации.
-
-    Документация: https://dev.max.ru/docs-api
+    Write-first по номеру телефона MAX-API не поддерживает (получатель —
+    только chat_id из вебхука). Если нужна отправка первым по номеру — это
+    сторонний агрегатор (коннектор max_wamm), а не официальное API.
     """
 
     strategy_type = "max_business"
+    # Пока оставляем старый домен. Миграция на platform-api2.max.ru
+    # (+ сертификат Минцифры) — до 19.07.2026. Переопределяется полем
+    # connector_url коннектора.
     BASE_API_URL = "https://platform-api.max.ru"
-    TIMEOUT = 30.0
 
-    # max_business отправляет по своему токену бизнес-аккаунта (Authorization=
-    # access_token) и адресует по номеру телефона — outbox-аккаунт
-    # (chat_external_account) ему НЕ нужен (chat_send_message не использует
-    # user_from). Без этого флага базовый send_outgoing_message молча
-    # пропускал отправку (gate `if outbox …`), т.к. Outbox account пуст.
-    requires_outbox_account = False
 
-    UPLOAD_RETRY = 4
-    UPLOAD_RETRY_DELAY = 1.5
-
-    # ========================================================================
-    # Вспомогательные методы
-    # ========================================================================
-
-    def _base_url(self, connector: "ChatConnector") -> str:
-        return (connector.connector_url or self.BASE_API_URL).rstrip("/")
-
-    def _api_url(self, connector: "ChatConnector", method: str) -> str:
-        return f"{self._base_url(connector)}/{method.lstrip('/')}"
-
-    @staticmethod
-    def _headers(connector: "ChatConnector") -> dict:
-        """Официальный API авторизуется заголовком Authorization=access_token."""
-        return {"Authorization": connector.access_token or ""}
-
-    @staticmethod
-    def _recipient_digits(value: Any) -> str:
-        """
-        Цифры номера получателя (без формата).
-
-        Бизнес-канал адресует по номеру телефона (write-first). На провод номер
-        уходит в E.164 (`+<digits>`), а этими же цифрами (без «+») ключуется
-        переписка — чтобы совпасть с ключом входящего webhook
-        (adapter.sender_phone тоже отдаёт digits), иначе ответ клиента создаст
-        второй чат.
-        """
-        return re.sub(r"\D", "", str(value or ""))
-
-    @staticmethod
-    def _parse(response: httpx.Response, action: str) -> dict:
-        try:
-            result = response.json()
-        except Exception:  # noqa: BLE001
-            result = {}
-        if response.status_code >= 400:
-            # Полный ответ MAX в лог — API официально не специфицирован,
-            # тело часто содержит больше деталей, чем короткое message.
-            logger.warning(
-                "MAX business %s FAILED: HTTP %s\n  request: %s %s\n  "
-                "response: %s",
-                action,
-                response.status_code,
-                response.request.method if response.request else "?",
-                str(response.request.url) if response.request else "?",
-                (response.text or "")[:1500],
-            )
-            message = ""
-            if isinstance(result, dict):
-                message = result.get("message") or result.get("code") or ""
-            raise ValueError(
-                f"MAX business {action}: HTTP {response.status_code} "
-                f"{message or (response.text or '')[:200]}"
-            )
-        return result if isinstance(result, dict) else {}
-
-    @staticmethod
-    def _extract_mid(result: dict) -> str:
-        message = result.get("message", {}) or {}
-        body = message.get("body", {}) or {}
-        return str(body.get("mid", "") or result.get("mid", ""))
-
-    async def get_or_generate_token(
-        self, connector: "ChatConnector"
-    ) -> str | None:
-        """Токен бизнес-аккаунта статический — возвращаем access_token."""
-        return connector.access_token
-
-    # ========================================================================
-    # Webhook (официально через /subscriptions)
-    # ========================================================================
-
-    async def set_webhook(self, connector: "ChatConnector") -> bool:
-        """Подписаться на обновления. MAX API: POST /subscriptions."""
-        url = self._api_url(connector, "subscriptions")
-        payload: dict[str, Any] = {
-            "url": connector.webhook_url,
-            "update_types": ["message_created"],
-        }
-        if connector.webhook_hash:
-            payload["secret"] = connector.webhook_hash
-
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.post(
-                url, headers=self._headers(connector), json=payload
-            )
-            self._parse(response, "setWebhook")
-
-        logger.info("MAX business webhook set for connector %s", connector.id)
-        return True
-
-    async def unset_webhook(self, connector: "ChatConnector") -> Any:
-        """Отписаться. MAX API: DELETE /subscriptions?url=..."""
-        url = self._api_url(connector, "subscriptions")
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.delete(
-                url,
-                headers=self._headers(connector),
-                params={"url": connector.webhook_url},
-            )
-            result = self._parse(response, "deleteWebhook")
-
-        logger.info(
-            "MAX business webhook deleted for connector %s", connector.id
-        )
-        return result
-
-    async def get_webhook_info(self, connector: "ChatConnector") -> dict:
-        """Список подписок. MAX API: GET /subscriptions."""
-        url = self._api_url(connector, "subscriptions")
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.get(url, headers=self._headers(connector))
-            return self._parse(response, "getSubscriptions")
-
-    async def get_self_account_id(self, connector: "ChatConnector") -> dict:
-        """Информация о бизнес-аккаунте. MAX API: GET /me."""
-        url = self._api_url(connector, "me")
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.get(url, headers=self._headers(connector))
-            return self._parse(response, "getMe")
-
-    # ========================================================================
-    # Отправка сообщений
-    # ========================================================================
-
-    async def chat_send_message(
-        self,
-        connector: "ChatConnector",
-        user_from: "ChatExternalAccount",
-        body: str,
-        chat_id: str | None = None,
-        recipients_ids: list | None = None,
-    ) -> Tuple[str, str]:
-        """
-        Отправить текст. Можно ПЕРВЫМ — по номеру телефона.
-
-        MAX API: POST /messages?phone=<номер>  (write-first)
-                 либо ?chat_id=<id>            (ответ в существующий чат)
-
-        chat_id здесь — это телефон (для первого сообщения / переписки,
-        ключуемой по номеру) либо chat_id существующего чата.
-        """
-        if not chat_id:
-            raise ValueError(
-                "Cannot send MAX business message without recipient"
-            )
-
-        clean_text = re.sub(r"<[^>]+>", "", body or "")
-
-        url = self._api_url(connector, "messages")
-        # На провод — E.164 (+digits); ключ переписки — те же цифры (без «+»).
-        digits = self._recipient_digits(chat_id)
-        params = {"phone": "+" + digits}
-        key = digits
-
-        # Лог запроса (без Authorization) — видеть, что именно уходит в MAX:
-        # эндпоинт, параметры адресации (phone/chat_id) и текст.
-        logger.info(
-            "MAX business sendMessage → POST %s params=%s text=%r",
-            url,
-            params,
-            clean_text[:200],
-        )
-
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.post(
-                url,
-                headers=self._headers(connector),
-                params=params,
-                json={"text": clean_text},
-            )
-            result = self._parse(response, "sendMessage")
-
-        msg_id = self._extract_mid(result)
-        logger.info("MAX business message sent: %s to %s", msg_id, key)
-        return msg_id, str(key)
-
-    async def chat_send_message_binary(
-        self,
-        connector: "ChatConnector",
-        user_from: "ChatExternalAccount",
-        chat_id: str,
-        attachment: "Attachment",
-        recipients_ids: list | None = None,
-    ) -> Tuple[str, str]:
-        """
-        Отправить файл/изображение (официальные uploads, как в Bot API):
-        POST /uploads?type=... -> залить бинарь -> POST /messages с attachments.
-        Адресация — по номеру (E.164), см. _recipient_digits.
-        """
-        if not chat_id:
-            raise ValueError("Cannot send MAX business file without recipient")
-
-        mimetype = attachment.mimetype or ""
-        att_type = self._attachment_type(mimetype)
-
-        content = attachment.content
-        if content is None and hasattr(attachment, "read_content"):
-            content = await attachment.read_content()
-        if content is None:
-            raise ValueError("Attachment has no content")
-
-        payload = await self._upload_attachment(
-            connector, att_type, attachment.name, content, mimetype
-        )
-
-        url = self._api_url(connector, "messages")
-        digits = self._recipient_digits(chat_id)
-        params = {"phone": "+" + digits}
-        key = digits
-        message_body = {
-            "attachments": [{"type": att_type, "payload": payload}]
-        }
-
-        last_error: Exception | None = None
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            for _ in range(self.UPLOAD_RETRY):
-                response = await client.post(
-                    url,
-                    headers=self._headers(connector),
-                    params=params,
-                    json=message_body,
-                )
-                if response.status_code < 400:
-                    result = self._parse(response, "sendMessage(file)")
-                    msg_id = self._extract_mid(result)
-                    logger.info(
-                        "MAX business %s sent: %s to %s",
-                        att_type,
-                        msg_id,
-                        key,
-                    )
-                    return msg_id, str(key)
-
-                text = response.text or ""
-                if "not.ready" in text:
-                    last_error = ValueError(text)
-                    await asyncio.sleep(self.UPLOAD_RETRY_DELAY)
-                    continue
-                self._parse(response, "sendMessage(file)")
-
-        raise ValueError(
-            f"MAX business sendMessage(file) failed after retries: {last_error}"
-        )
-
-    async def _upload_attachment(
-        self,
-        connector: "ChatConnector",
-        att_type: str,
-        filename: str,
-        content: bytes,
-        mimetype: str,
-    ) -> dict:
-        """POST /uploads?type=... -> залив бинаря -> payload для attachments."""
-        uploads_url = self._api_url(connector, "uploads")
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.post(
-                uploads_url,
-                headers=self._headers(connector),
-                params={"type": att_type},
-            )
-            upload_info = self._parse(response, "uploads")
-
-        upload_target = upload_info.get("url")
-        if not upload_target:
-            raise ValueError(f"MAX business uploads: no url in {upload_info}")
-
-        files = {
-            "data": (filename, content, mimetype or "application/octet-stream")
-        }
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.post(upload_target, files=files)
-            upload_result = self._parse(response, "uploadBinary")
-
-        if upload_result.get("photos"):
-            return {"photos": upload_result["photos"]}
-        if upload_result.get("token"):
-            return {"token": upload_result["token"]}
-        if upload_info.get("token"):
-            return {"token": upload_info["token"]}
-        raise ValueError(
-            f"MAX business upload: cannot resolve token from {upload_result}"
-        )
-
-    # ========================================================================
-    # Утилиты
-    # ========================================================================
-
-    @staticmethod
-    def _attachment_type(mimetype: str) -> str:
-        mimetype = mimetype or ""
-        if mimetype.startswith("image/"):
-            return "image"
-        if mimetype.startswith("video/"):
-            return "video"
-        if mimetype.startswith("audio/"):
-            return "audio"
-        return "file"
-
-    def create_message_adapter(
-        self, connector: "ChatConnector", raw_message: dict
-    ) -> MaxBusinessMessageAdapter:
-        return MaxBusinessMessageAdapter(connector, raw_message)
+# =============================================================================
+# СТАРЫЙ КОД (write-first по номеру телефона) — ЗАКОММЕНТИРОВАН.
+#
+# Отключён, т.к. официального бизнес-API MAX с отправкой первым по номеру не
+# существует: platform-api.max.ru — Bot API, получатель = chat_id из вебхука,
+# а POST /messages?phone=<E.164> возвращал HTTP 400 «Unknown recipient».
+# Всё поведение теперь наследуется от MaxBotStrategy (см. выше). Ниже —
+# ключевые куски прежней phone-реализации (полностью — в git history):
+#
+# import asyncio, logging, re
+# import httpx
+# from backend.base.crm.chat.strategies.strategy import ChatStrategyBase
+# from .adapter import MaxBusinessMessageAdapter
+# logger = logging.getLogger(__name__)
+#
+# class MaxBusinessStrategy(ChatStrategyBase):
+#     strategy_type = "max_business"
+#     BASE_API_URL = "https://platform-api.max.ru"
+#     TIMEOUT = 30.0
+#     # Слал по токену бизнес-аккаунта + номеру, outbox-аккаунт не использовал.
+#     requires_outbox_account = False
+#
+#     @staticmethod
+#     def _headers(connector):
+#         return {"Authorization": connector.access_token or ""}
+#
+#     @staticmethod
+#     def _recipient_digits(value):
+#         # Цифры номера; на провод уходил E.164 (+digits), ключ — digits.
+#         return re.sub(r"\D", "", str(value or ""))
+#
+#     async def chat_send_message(self, connector, user_from, body,
+#                                 chat_id=None, recipients_ids=None):
+#         # POST /messages?phone=+<digits> — MAX отвечал 400 Unknown recipient.
+#         digits = self._recipient_digits(chat_id)
+#         params = {"phone": "+" + digits}
+#         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+#             response = await client.post(
+#                 self._api_url(connector, "messages"),
+#                 headers=self._headers(connector),
+#                 params=params,
+#                 json={"text": re.sub(r"<[^>]+>", "", body or "")},
+#             )
+#             result = self._parse(response, "sendMessage")
+#         return self._extract_mid(result), digits
+#
+#     # chat_send_message_binary — то же, но с POST /uploads и attachments.
+#     # set_webhook/unset_webhook/get_webhook_info — POST/DELETE/GET
+#     #   /subscriptions (идентичны max_bot, теперь наследуются).
+#     # get_self_account_id — GET /me (идентично max_bot).
+#     # _upload_attachment — POST /uploads (идентично max_bot).
+#
+#     def create_message_adapter(self, connector, raw_message):
+#         # Прежний адаптер ключевал входящее по номеру (sender_phone).
+#         # Теперь наследуется max_bot-адаптер (chat_id).
+#         return MaxBusinessMessageAdapter(connector, raw_message)
+# =============================================================================

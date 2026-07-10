@@ -566,6 +566,18 @@ const chatApi = api.injectEndpoints({
       }),
     }),
 
+    // Delete a subscription/webhook by arbitrary URL (cleanup old ones, MAX)
+    deleteConnectorWebhookByUrl: build.mutation<
+      { data: { ok: boolean; error?: string; result?: unknown } },
+      { connectorId: number; url: string }
+    >({
+      query: ({ connectorId, url }) => ({
+        url: `/connectors/${connectorId}/webhook/delete-by-url`,
+        method: 'POST',
+        body: { url },
+      }),
+    }),
+
     // Get webhook info
     getConnectorWebhookInfo: build.query<
       { data: Record<string, unknown> },
@@ -1030,6 +1042,7 @@ export const {
   useGetMyConnectorsQuery,
   useSetConnectorWebhookMutation,
   useUnsetConnectorWebhookMutation,
+  useDeleteConnectorWebhookByUrlMutation,
   useLazyGetConnectorWebhookInfoQuery,
   useLazyGetConnectorSelfAccountQuery,
   useTestConnectorMutation,

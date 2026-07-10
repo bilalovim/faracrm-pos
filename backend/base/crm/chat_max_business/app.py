@@ -5,25 +5,28 @@ from backend.base.system.core.app import App
 
 
 class ChatMaxBusinessApp(App):
-    """Официальная бизнес-интеграция с MAX (platform-api.max.ru).
+    """Канал «MAX для бизнеса» (platform-api.max.ru).
 
-    В отличие от бот-коннектора (chat_max) и агрегатора (chat_max_wamm), это
-    ОФИЦИАЛЬНЫЙ канал «MAX для бизнеса»: верифицированный бизнес-аккаунт может
-    писать клиенту ПЕРВЫМ по номеру телефона (санкционировано платформой,
-    без риска ограничений аккаунта).
+    По факту это тот же MAX Bot API, что и бот-коннектор (chat_max_bot):
+    получатель адресуется по chat_id из вебхука, отправка POST /messages.
+    Официального write-first по номеру телефона у MAX-API НЕТ (см.
+    MaxBusinessStrategy) — стратегия наследует поведение max_bot целиком,
+    поэтому «бот» и «бизнес» для клиента работают одинаково. Отправка первым
+    по номеру возможна только через сторонний агрегатор (chat_max_wamm).
     """
 
     info = {
         "name": "Chat MAX Business",
         "summary": (
-            "Official MAX for Business API (platform-api.max.ru), "
-            "write-first by phone"
+            "MAX for Business (platform-api.max.ru) — тот же Bot API, что и "
+            "max_bot; адресация по chat_id из вебхука"
         ),
         "author": "FARA CRM",
         "category": "Chat",
         "version": "1.0.0",
         "license": "FARA CRM License v1.0",
-        "depends": ["chat"],
+        # chat_max_bot — стратегия наследует MaxBotStrategy.
+        "depends": ["chat", "chat_max_bot"],
         "sequence": 122,
     }
 

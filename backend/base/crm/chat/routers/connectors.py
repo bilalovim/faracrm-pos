@@ -71,6 +71,32 @@ async def unset_connector_webhook(req: Request, connector_id: int):
     return {"success": success, "webhook_state": connector.webhook_state}
 
 
+@router_private.post("/connectors/{connector_id}/webhook/delete-by-url")
+async def delete_connector_webhook_by_url(req: Request, connector_id: int):
+    """
+    Удалить подписку/webhook по ПРОИЗВОЛЬНОМУ URL (не только текущему
+    connector.webhook_url) — для чистки старых подписок.
+
+    Тело: {"url": "<webhook_url>"}. Поддерживается провайдерами со списком
+    подписок (MAX). Для остальных стратегия бросит NotImplementedError.
+    """
+    env: "Environment" = req.app.state.env
+
+    payload = await req.json()
+    webhook_url = (payload or {}).get("url")
+    if not webhook_url:
+        return {"data": {"ok": False, "error": "url required"}}
+
+    connector = await env.models.chat_connector.get(connector_id)
+    try:
+        result = await connector.strategy.delete_webhook_by_url(
+            connector, webhook_url
+        )
+    except NotImplementedError as e:
+        return {"data": {"ok": False, "error": str(e)}}
+    return {"data": {"ok": True, "result": result}}
+
+
 @router_private.get("/connectors/{connector_id}/webhook/info")
 async def get_connector_webhook_info(req: Request, connector_id: int):
     """

@@ -2,15 +2,26 @@ import { FieldChar } from '@/components/Form/Fields/FieldChar';
 import { FormRow, FormSection } from '@/components/Form/Layout';
 import { useTranslation } from 'react-i18next';
 import { useFormContext } from '@/components/Form/FormContext';
-import { Button, Group, Badge, Text, Modal, Code, Stack } from '@mantine/core';
+import {
+  Button,
+  Group,
+  Badge,
+  Text,
+  Modal,
+  Code,
+  Stack,
+  TextInput,
+} from '@mantine/core';
 import {
   IconWebhook,
   IconWebhookOff,
   IconInfoCircle,
+  IconTrash,
 } from '@tabler/icons-react';
 import {
   useSetConnectorWebhookMutation,
   useUnsetConnectorWebhookMutation,
+  useDeleteConnectorWebhookByUrlMutation,
   useLazyGetConnectorWebhookInfoQuery,
 } from '@/services/api/chat';
 import { notifications } from '@mantine/notifications';
@@ -41,7 +52,10 @@ export function WebhookSection({
     useUnsetConnectorWebhookMutation();
   const [getWebhookInfo, { isLoading: isLoadingInfo }] =
     useLazyGetConnectorWebhookInfoQuery();
+  const [deleteWebhookByUrl, { isLoading: isDeletingByUrl }] =
+    useDeleteConnectorWebhookByUrlMutation();
 
+  const [deleteUrl, setDeleteUrl] = useState('');
   const [webhookState, setWebhookState] = useState<string | null>(null);
   const [webhookInfo, setWebhookInfo] = useState<Record<
     string,
@@ -103,6 +117,54 @@ export function WebhookSection({
         message: t('connector.webhook.unsetSuccess', 'Webhook удалён'),
         color: 'green',
       });
+    } catch (error: any) {
+      notifications.show({
+        title: t('common.error', 'Ошибка'),
+        message:
+          error?.data?.detail ||
+          t('connector.webhook.unsetError', 'Не удалось удалить webhook'),
+        color: 'red',
+      });
+    }
+  };
+
+  const handleDeleteByUrl = async () => {
+    if (!connectorId) {
+      notifications.show({
+        title: t('common.error', 'Ошибка'),
+        message: t('connector.webhook.saveFirst', 'Сначала сохраните коннектор'),
+        color: 'red',
+      });
+      return;
+    }
+    const url = deleteUrl.trim();
+    if (!url) return;
+
+    try {
+      const { data } = await deleteWebhookByUrl({
+        connectorId: Number(connectorId),
+        url,
+      }).unwrap();
+
+      if (data.ok) {
+        notifications.show({
+          title: t('common.success', 'Успешно'),
+          message: t(
+            'connector.webhook.deleteByUrlSuccess',
+            'Подписка удалена',
+          ),
+          color: 'green',
+        });
+        setDeleteUrl('');
+      } else {
+        notifications.show({
+          title: t('common.error', 'Ошибка'),
+          message:
+            data.error ||
+            t('connector.webhook.unsetError', 'Не удалось удалить webhook'),
+          color: 'red',
+        });
+      }
     } catch (error: any) {
       notifications.show({
         title: t('common.error', 'Ошибка'),
@@ -197,6 +259,31 @@ export function WebhookSection({
             )}
           </Text>
         )}
+
+        {/* Удаление старой/чужой подписки по произвольному URL. Список
+            текущих подписок можно посмотреть кнопкой «Информация». */}
+        <Group align="flex-end" gap="sm" mb="md" wrap="nowrap">
+          <TextInput
+            style={{ flex: 1 }}
+            label={t(
+              'connector.webhook.deleteByUrlLabel',
+              'Удалить подписку по URL',
+            )}
+            placeholder="https://old-webhook.example.com/..."
+            value={deleteUrl}
+            onChange={e => setDeleteUrl(e.currentTarget.value)}
+            disabled={isNewRecord}
+          />
+          <Button
+            leftSection={<IconTrash size={16} />}
+            color="red"
+            variant="light"
+            onClick={handleDeleteByUrl}
+            loading={isDeletingByUrl}
+            disabled={isNewRecord || !deleteUrl.trim()}>
+            {t('connector.webhook.deleteByUrl', 'Удалить')}
+          </Button>
+        </Group>
 
         <FormRow cols={1}>
           <FieldChar
