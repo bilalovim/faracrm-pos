@@ -714,23 +714,21 @@ class EmailStrategy(ChatStrategyBase):
         processed = 0
         errors = 0
 
-        # Получаем все активные email-коннекторы с нужными полями
+        # Получаем все активные email-коннекторы. Грузим ПОЛНОСТЬЮ (без fields=,
+        # т.е. все скаляры) + вложенные contact_type_id/outbox_account_id —
+        # они нужны при обработке входящего (_process_incoming_message →
+        # find_or_create_for_webhook требует connector.contact_type_id, а
+        # лидогенерация/From — прочие поля). Раньше грузился урезанный набор
+        # без contact_type_id → «Contact type must be set» на входящем письме.
         connectors = await env.models.chat_connector.search(
             filter=[
                 ("type", "=", "email"),
                 ("active", "=", True),
             ],
-            fields=[
-                "id",
-                "name",
-                "type",
-                "active",
-                "imap_host",
-                "imap_port",
-                "email_username",
-                "email_password",
-                "imap_last_uid",
-            ],
+            fields_nested={
+                "contact_type_id": ["id", "name", "is_phone_format"],
+                "outbox_account_id": ["id", "external_id"],
+            },
         )
 
         if not connectors:
