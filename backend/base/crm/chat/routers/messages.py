@@ -382,9 +382,14 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
                 # (ContactType.MATCH_SQL). is_exact метит точное совпадение —
                 # ниже предпочитаем его phone-format фолбэку.
                 # Получателем может быть партнёр (cm.partner_id) ИЛИ юзер
-                # (cm.user_id) — как во внутреннем чате с сотрудником; матчим
-                # обе связи. Себя (user_id-отправителя) исключаем, чтобы не
-                # слать письмо самому себе.
+                # (cm.user_id) — как во внутреннем чате с сотрудником. Но
+                # user-ветку включаем ТОЛЬКО когда в чате нет партнёров
+                # (NOT EXISTS ниже): иначе в клиентском чате оператор-юзер со
+                # своим телефоном/контактом того же типа ошибочно попал бы в
+                # получатели, и сообщение клиенту ушло бы ещё и оператору.
+                # Для telegram/whatsapp/max_business (там всегда есть партнёр)
+                # выборка остаётся строго по партнёру — как раньше.
+                # Себя (user_id-отправителя) тоже исключаем.
                 # Плейсхолдеры %s по порядку: user_id, contact_type_id, chat_id.
                 session = env.apps.db.get_session()
                 recipients_query = f"""
@@ -396,7 +401,13 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
                                 AND c.partner_id = cm.partner_id)
                          OR (cm.user_id IS NOT NULL
                                 AND c.user_id = cm.user_id
-                                AND cm.user_id <> %s)
+                                AND cm.user_id <> %s
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM chat_member pm
+                                    WHERE pm.chat_id = cm.chat_id
+                                      AND pm.partner_id IS NOT NULL
+                                      AND pm.is_active = true
+                                ))
                         )
                     JOIN contact_type ict ON ict.id = c.contact_type_id
                     JOIN contact_type cct ON cct.id = %s

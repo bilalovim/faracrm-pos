@@ -636,7 +636,13 @@ class Chat(AuditMixin, DotModel):
             JOIN contact c ON c.active = true AND (
                     (cm.partner_id IS NOT NULL AND c.partner_id = cm.partner_id)
                  OR (cm.user_id IS NOT NULL AND c.user_id = cm.user_id
-                        AND (%s::int IS NULL OR cm.user_id <> %s))
+                        AND (%s::int IS NULL OR cm.user_id <> %s)
+                        AND NOT EXISTS (
+                            SELECT 1 FROM chat_member pm
+                            WHERE pm.chat_id = cm.chat_id
+                              AND pm.partner_id IS NOT NULL
+                              AND pm.is_active = true
+                        ))
                 )
             JOIN contact_type ict ON ict.id = c.contact_type_id
             JOIN chat_connector cc ON cc.active = true
