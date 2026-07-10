@@ -51,6 +51,14 @@ class MaxBusinessStrategy(ChatStrategyBase):
     strategy_type = "max_business"
     BASE_API_URL = "https://platform-api.max.ru"
     TIMEOUT = 30.0
+
+    # max_business отправляет по своему токену бизнес-аккаунта (Authorization=
+    # access_token) и адресует по номеру телефона — outbox-аккаунт
+    # (chat_external_account) ему НЕ нужен (chat_send_message не использует
+    # user_from). Без этого флага базовый send_outgoing_message молча
+    # пропускал отправку (gate `if outbox …`), т.к. Outbox account пуст.
+    requires_outbox_account = False
+
     UPLOAD_RETRY = 4
     UPLOAD_RETRY_DELAY = 1.5
 
@@ -94,6 +102,17 @@ class MaxBusinessStrategy(ChatStrategyBase):
         except Exception:  # noqa: BLE001
             result = {}
         if response.status_code >= 400:
+            # Полный ответ MAX в лог — API официально не специфицирован,
+            # тело часто содержит больше деталей, чем короткое message.
+            logger.warning(
+                "MAX business %s FAILED: HTTP %s\n  request: %s %s\n  "
+                "response: %s",
+                action,
+                response.status_code,
+                response.request.method if response.request else "?",
+                str(response.request.url) if response.request else "?",
+                (response.text or "")[:1500],
+            )
             message = ""
             if isinstance(result, dict):
                 message = result.get("message") or result.get("code") or ""
@@ -201,6 +220,15 @@ class MaxBusinessStrategy(ChatStrategyBase):
         # Канонический ключ переписки (цифры телефона или chat_id) — его же
         # вернём как external_chat_id, чтобы совпасть с ключом из webhook.
         key = params.get("phone") or params.get("chat_id") or str(chat_id)
+
+        # Лог запроса (без Authorization) — видеть, что именно уходит в MAX:
+        # эндпоинт, параметры адресации (phone/chat_id) и текст.
+        logger.info(
+            "MAX business sendMessage → POST %s params=%s text=%r",
+            url,
+            params,
+            clean_text[:200],
+        )
 
         async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
             response = await client.post(
