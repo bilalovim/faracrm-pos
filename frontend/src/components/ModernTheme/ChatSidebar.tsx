@@ -116,7 +116,7 @@ export function ChatSidebar() {
   // и тип (для иконки) папки коннектора. GET /connectors на бэке нет.
   const { data: connectorsData } = useSearchQuery({
     model: 'chat_connector',
-    fields: ['id', 'type', 'name'],
+    fields: ['id', 'type', 'name', 'active', 'category'],
     filter: [],
     limit: 200,
   });
@@ -126,9 +126,17 @@ export function ChatSidebar() {
   const [editing, setEditing] = useState<ChatFolder | null>(null);
 
   const connMap = useMemo(() => {
-    const m = new Map<number, { type: string; name: string }>();
+    const m = new Map<
+      number,
+      { type: string; name: string; active: boolean; category: string }
+    >();
     for (const c of ((connectorsData?.data as unknown) as any[]) || []) {
-      m.set(c.id, { type: c.type, name: c.name });
+      m.set(c.id, {
+        type: c.type,
+        name: c.name,
+        active: c.active,
+        category: c.category,
+      });
     }
     return m;
   }, [connectorsData]);
@@ -143,7 +151,16 @@ export function ChatSidebar() {
 
   // Разделяем на обычные и коннекторные (как раньше внутренние / внешние).
   const regularFolders = allFolders.filter(f => !connectorId(f));
-  const connectorFolders = allFolders.filter(f => connectorId(f));
+  // Папку коннектора показываем только если сам коннектор АКТИВЕН и это не
+  // notification-канал (web_push — уведомления, а не чат). Иначе в сайдбаре
+  // висели папки выключенных и уведомительных коннекторов. Коннектор, которого
+  // нет в connMap (удалён / не загрузился), тоже прячем.
+  const connectorFolders = allFolders.filter(f => {
+    const cid = connectorId(f);
+    if (!cid) return false;
+    const c = connMap.get(cid);
+    return !!c && c.active && c.category !== 'notification';
+  });
 
   const openCreate = () => {
     setEditing(null);
