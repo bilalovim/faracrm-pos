@@ -6,6 +6,7 @@ import {
   Group,
   ActionIcon,
   Menu,
+  Badge,
 } from '@mantine/core';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -26,7 +27,7 @@ import {
   useSearchQuery,
   useDeleteBulkMutation,
 } from '@/services/api/crudApi';
-import { ChatFolder } from '@/services/api/chat';
+import { ChatFolder, useGetFolderUnreadQuery } from '@/services/api/chat';
 import { FolderModal } from '@/fara_chat/components/FolderModal';
 import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 import { MaxIcon } from '@/fara_chat_max_bot/components/MaxIcon';
@@ -122,6 +123,11 @@ export function ChatSidebar() {
   });
   const [deleteBulk] = useDeleteBulkMutation();
 
+  // Непрочитанные по папкам — считаются на бэке на лету (как счётчик вверху
+  // справа), ничего не храним. { "<folder_id>": count } только для count>0.
+  const { data: unreadData } = useGetFolderUnreadQuery();
+  const unreadByFolder = unreadData?.data || {};
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ChatFolder | null>(null);
 
@@ -184,6 +190,7 @@ export function ChatSidebar() {
     const active = currentPath === to;
     // Меню (изменить/удалить) только у своих папок; глобальные — без меню.
     const editable = !isGlobal(folder);
+    const unread = unreadByFolder[String(folder.id)] || 0;
 
     return (
       <Group key={folder.id} gap={2} wrap="nowrap">
@@ -194,9 +201,14 @@ export function ChatSidebar() {
           onClick={() => navigate(to)}>
           <Group gap="sm" wrap="nowrap">
             {iconNode}
-            <Text size="sm" fw={active ? 600 : 400} truncate>
+            <Text size="sm" fw={active ? 600 : 400} truncate style={{ flex: 1 }}>
               {label}
             </Text>
+            {unread > 0 && (
+              <Badge size="sm" variant="filled" color="blue" circle>
+                {unread > 99 ? '99+' : unread}
+              </Badge>
+            )}
           </Group>
         </UnstyledButton>
 

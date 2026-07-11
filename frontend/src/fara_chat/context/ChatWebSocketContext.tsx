@@ -159,6 +159,16 @@ export function ChatWebSocketProvider({
             }),
           );
 
+          // Обновляем счётчики непрочитанных у папок в сайдбаре (считаются
+          // на бэке на лету). Только чужое сообщение меняет unread.
+          if (!isOwnMessage) {
+            dispatch(
+              chatApi.util.invalidateTags([
+                { type: 'Chat', id: 'FOLDER_UNREAD' },
+              ]),
+            );
+          }
+
           // Добавляем сообщение в кэш сообщений чата
           // Это нужно чтобы сообщения появлялись когда ChatPage не открыт
           dispatch(
@@ -179,7 +189,12 @@ export function ChatWebSocketProvider({
       // Обработка notification (системные уведомления, cron, активности)
       // Перечитываем список чатов чтобы обновить unread_count и last_message
       if (message.type === 'notification') {
-        dispatch(chatApi.util.invalidateTags([{ type: 'Chat', id: 'LIST' }]));
+        dispatch(
+          chatApi.util.invalidateTags([
+            { type: 'Chat', id: 'LIST' },
+            { type: 'Chat', id: 'FOLDER_UNREAD' },
+          ]),
+        );
       }
 
       // Обработка messages_read:
@@ -199,6 +214,12 @@ export function ChatWebSocketProvider({
                 chat.unread_count = 0;
               }
             }),
+          );
+          // Мы сами прочитали чат → пересчитать бейджи папок.
+          dispatch(
+            chatApi.util.invalidateTags([
+              { type: 'Chat', id: 'FOLDER_UNREAD' },
+            ]),
           );
         }
       }

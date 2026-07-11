@@ -516,6 +516,140 @@ async def get_chats(
     return {"data": sorted_list, "total": len(sorted_list)}
 
 
+@router_private.get("/chats/folders/unread")
+async def get_folders_unread(req: Request):
+    """Кол-во непрочитанных сообщений по каждой папке для текущего юзера.
+
+    Считаем НА ЛЕТУ (ничего не храним) — тем же способом, что и бейджик
+    вверху справа: сначала один запрос даёт unread по каждому чату юзера,
+    затем для каждой папки суммируем unread по её чатам. Членство чата в
+    папке резолвится ровно как в get_chats (папка коннектора → через
+    chat_external_chat; обычная → domain над chat), поэтому счётчик всегда
+    совпадает с тем, что реально видно при открытии папки.
+
+    Хранить нельзя: один чат входит сразу в несколько папок («Все» +
+    «Личные» + папка коннектора), unread — per-user (watermark в
+    chat_member), а папки глобальные; domain папки может меняться.
+
+    Ответ: {"data": {"<folder_id>": <count>, ...}} — только папки с count>0
+    (фронт рисует бейдж лишь при >0).
+
+    Без N+1: набор непрочитанных чатов у юзера мал, поэтому вместо «на каждую
+    папку — свой запрос за её чатами» делаем фиксированные 3 запроса и решаем
+    принадлежность в памяти:
+      (1) unread + chat_type по каждому непрочитанному чату;
+      (2) карта чат→коннектор(ы) для этих чатов (bulk, один IN-запрос);
+      (3) список папок (как их берёт сайдбар — limit/сортировка те же).
+    Встроенные папки резолвим по kind/chat_type, папки коннектора — по карте
+    из (2). Произвольный domain кастомной папки (редко) — единственный случай,
+    где нужен запрос, и тот сужен до непрочитанных (id IN ...).
+    """
+    env: "Environment" = req.app.state.env
+    auth_session: "Session" = req.state.session
+    user_id = auth_session.user_id.id
+
+    session = env.apps.db.get_session()
+
+    # (1) unread + chat_type по каждому непрочитанному чату юзера. Формула та же,
+    # что в get_chats: id > watermark, не свои, чат активен и не record, членство
+    # активно. chat_type берём тут же — по нему резолвятся встроенные папки.
+    unread_rows = await session.execute(
+        """
+        SELECT m.chat_id, c.chat_type, COUNT(*) AS unread_count
+        FROM chat_message m
+        JOIN chat_member cm
+          ON cm.chat_id = m.chat_id
+         AND cm.user_id = %s
+         AND cm.is_active = true
+        JOIN chat c
+          ON c.id = m.chat_id
+         AND c.active = true
+         AND c.chat_type != 'record'
+        WHERE m.is_deleted = false
+          AND (m.author_user_id IS NULL OR m.author_user_id != %s)
+          AND m.id > COALESCE(cm.last_read_message_id, 0)
+        GROUP BY m.chat_id, c.chat_type
+        """,
+        (user_id, user_id),
+    )
+    if not unread_rows:
+        return {"data": {}}
+
+    unread_by_chat: dict[int, int] = {
+        r["chat_id"]: r["unread_count"] for r in unread_rows
+    }
+    type_by_chat: dict[int, str] = {
+        r["chat_id"]: r["chat_type"] for r in unread_rows
+    }
+    unread_ids = list(unread_by_chat)
+    total_all = sum(unread_by_chat.values())
+
+    # (2) Карта непрочитанный чат → id коннектора(ов) — один bulk-запрос,
+    # вместо запроса на каждую папку коннектора.
+    conn_rows = await session.execute(
+        "SELECT chat_id, connector_id FROM chat_external_chat "
+        "WHERE chat_id = ANY(%s)",
+        (unread_ids,),
+    )
+    connectors_by_chat: dict[int, set[int]] = {}
+    for r in conn_rows:
+        connectors_by_chat.setdefault(r["chat_id"], set()).add(
+            r["connector_id"]
+        )
+
+    # (3) Папки — как их запрашивает сайдбар (ChatSidebar): limit 100,
+    # сортировка по sequence. Правила chat_folder отдают свои + глобальные.
+    folders = await env.models.chat_folder.search(
+        filter=[],
+        fields=["id", "domain", "connector_id", "kind"],
+        limit=100,
+        sort="sequence",
+        order="ASC",
+    )
+
+    result: dict[str, int] = {}
+    for folder in folders:
+        conn = folder.connector_id
+        if conn:
+            # Папка коннектора → чаты с этим connector_id (из карты п.2).
+            cid = conn.id
+            total = sum(
+                cnt
+                for ch, cnt in unread_by_chat.items()
+                if cid in connectors_by_chat.get(ch, ())
+            )
+        elif folder.kind == "direct":
+            total = sum(
+                cnt
+                for ch, cnt in unread_by_chat.items()
+                if type_by_chat[ch] == "direct"
+            )
+        elif folder.kind == "group":
+            total = sum(
+                cnt
+                for ch, cnt in unread_by_chat.items()
+                if type_by_chat[ch] in ("group", "channel")
+            )
+        elif folder.kind == "all" or not folder.domain:
+            # «Все» / пустой domain = все непрочитанные юзера.
+            total = total_all
+        else:
+            # Кастомная папка с произвольным domain. Резолвим по domain, но
+            # узко — только по непрочитанным (id IN unread_ids), не по всем
+            # чатам. (domain) AND (id in U): domain оборачиваем в подсписок,
+            # иначе OR внутри него «утечёт» за пределы условия по id.
+            matched = await env.models.chat.search(
+                filter=[folder.domain, ["id", "in", unread_ids]],
+                fields=["id"],
+            )
+            total = sum(unread_by_chat[m.id] for m in matched)
+
+        if total:
+            result[str(folder.id)] = total
+
+    return {"data": result}
+
+
 @router_private.post("/chats/{chat_id}/pin")
 async def pin_chat(req: Request, chat_id: int, body: ChatPin):
     """

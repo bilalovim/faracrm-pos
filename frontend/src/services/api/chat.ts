@@ -384,6 +384,8 @@ const chatApi = api.injectEndpoints({
         url: `/chats/${chatId}/read`,
         method: 'POST',
       }),
+      // Прочтение сбрасывает unread чата → пересчитать бейджи папок в сайдбаре.
+      invalidatesTags: [{ type: 'Chat', id: 'FOLDER_UNREAD' }],
     }),
 
     // Delete message
@@ -1025,12 +1027,21 @@ const folderApi = api.injectEndpoints({
       }),
       invalidatesTags: [{ type: 'Chat', id: 'LIST' }],
     }),
+
+    // Непрочитанные по папкам — считаются на бэке на лету (не хранятся),
+    // как и общий счётчик вверху справа. Ответ: { "<folder_id>": count }
+    // (только папки с count>0). Тег FOLDER_UNREAD инвалидируется из WS-контекста
+    // при new_message / messages_read / notification → бейджи обновляются живьём.
+    getFolderUnread: build.query<{ data: Record<string, number> }, void>({
+      query: () => '/chats/folders/unread',
+      providesTags: [{ type: 'Chat', id: 'FOLDER_UNREAD' }],
+    }),
   }),
   overrideExisting: false,
 });
 
 export { chatApi, recordChatApi, folderApi };
-export const { usePinChatMutation } = folderApi;
+export const { usePinChatMutation, useGetFolderUnreadQuery } = folderApi;
 export const {
   useGetChatsQuery,
   useGetChatQuery,
