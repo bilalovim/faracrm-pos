@@ -18,6 +18,7 @@ from backend.base.crm.users.audit_mixin import AuditMixin
 
 if TYPE_CHECKING:
     from backend.base.crm.chat.models.chat import Chat
+    from backend.base.crm.chat.models.chat_connector import ChatConnector
 
 
 class ChatMember(AuditMixin, MemberMixin):
@@ -70,6 +71,15 @@ class ChatMember(AuditMixin, MemberMixin):
     # чаты идут сверху списка getChats. У партнёров-участников не используется.
     is_pinned: bool = Boolean(
         default=False, description="Чат закреплён пользователем"
+    )
+
+    # Коннектор по умолчанию для отправки в этом чате — per-user (как is_pinned
+    # и watermark). null = internal. Подставляется при открытии чата; меняется
+    # галочкой «по умолчанию» в свитчере коннекторов. У партнёров не исп-ся.
+    default_connector_id: "ChatConnector | None" = Many2one(
+        relation_table=lambda: env.models.chat_connector,
+        ondelete="set null",
+        description="Коннектор по умолчанию (per-user, null=internal)",
     )
 
     # Поскольку роутеры используют эти имена в 15+ местах, сохраняем их

@@ -1,5 +1,6 @@
 import { ChatConnectorDetail } from '@/services/api/chat';
-import { ActionIcon, Menu, Tooltip, Text } from '@mantine/core';
+import { ActionIcon, Box, Menu, Tooltip, Text } from '@mantine/core';
+import { IconCheck } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 import { connectorIcon, connectorColors } from './connectorMeta';
 
@@ -9,6 +10,10 @@ interface ConnectorSwitcherProps {
   connectors: ChatConnectorDetail[];
   selectedConnectorId: number | null;
   onSelect: (connectorId: number | null) => void;
+  /** Коннектор по умолчанию (галочка). null = internal. */
+  defaultConnectorId?: number | null;
+  /** Сохранить выбор по умолчанию (per-user). Без него галочки нет. */
+  onSetDefault?: (connectorId: number | null) => void;
   disabled?: boolean;
 }
 
@@ -22,6 +27,8 @@ export function ConnectorSwitcher({
   connectors,
   selectedConnectorId,
   onSelect,
+  defaultConnectorId,
+  onSetDefault,
   disabled,
 }: ConnectorSwitcherProps) {
   const { t } = useTranslation('chat');
@@ -65,23 +72,63 @@ export function ConnectorSwitcher({
       </Menu.Target>
       <Menu.Dropdown>
         <Menu.Label>{t('sendVia')}</Menu.Label>
-        {connectors.map(connector => (
-          <Menu.Item
-            key={connector.connector_id ?? 'internal'}
-            leftSection={connectorIcon(connector.connector_type, 16)}
-            onClick={() => onSelect(connector.connector_id)}
-            color={
-              connector.connector_id === selectedConnectorId
-                ? connectorColors[connector.connector_type]
-                : undefined
-            }>
-            <Text
-              size="sm"
-              fw={connector.connector_id === selectedConnectorId ? 600 : 400}>
-              {connector.connector_name}
-            </Text>
-          </Menu.Item>
-        ))}
+        {connectors.map(connector => {
+          const cid = connector.connector_id ?? null;
+          const isSelected = cid === selectedConnectorId;
+          const isDefault = cid === (defaultConnectorId ?? null);
+          return (
+            <Menu.Item
+              key={cid ?? 'internal'}
+              leftSection={connectorIcon(connector.connector_type, 16)}
+              // Клик по строке — выбрать только для текущего сообщения.
+              onClick={() => onSelect(cid)}
+              color={
+                isSelected
+                  ? connectorColors[connector.connector_type]
+                  : undefined
+              }
+              rightSection={
+                onSetDefault ? (
+                  // Галочка справа — сохранить как «по умолчанию» (per-user).
+                  // Отдельное действие: stopPropagation, чтобы не сработал выбор.
+                  <Tooltip
+                    label={
+                      isDefault
+                        ? t('defaultConnector', 'По умолчанию')
+                        : t('setDefaultConnector', 'Сделать по умолчанию')
+                    }
+                    position="left"
+                    withArrow>
+                    <Box
+                      component="span"
+                      role="button"
+                      aria-label={t(
+                        'setDefaultConnector',
+                        'Сделать по умолчанию',
+                      )}
+                      onClick={e => {
+                        e.stopPropagation();
+                        onSetDefault(cid);
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        cursor: 'pointer',
+                        color: isDefault
+                          ? 'var(--mantine-color-green-6)'
+                          : 'var(--mantine-color-gray-5)',
+                        opacity: isDefault ? 1 : 0.5,
+                      }}>
+                      <IconCheck size={16} />
+                    </Box>
+                  </Tooltip>
+                ) : undefined
+              }>
+              <Text size="sm" fw={isSelected ? 600 : 400}>
+                {connector.connector_name}
+              </Text>
+            </Menu.Item>
+          );
+        })}
       </Menu.Dropdown>
     </Menu>
   );

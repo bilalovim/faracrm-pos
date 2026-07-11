@@ -186,12 +186,27 @@ const chatApi = api.injectEndpoints({
       invalidatesTags: [{ type: 'Chat', id: 'LIST' }],
     }),
 
-    // Get available connectors for a chat
+    // Get available connectors for a chat (+ per-user default connector)
     getChatConnectors: build.query<
-      { data: ChatConnectorDetail[] },
+      {
+        data: ChatConnectorDetail[];
+        default_connector_id: number | null;
+      },
       { chatId: number }
     >({
       query: ({ chatId }) => `/chats/${chatId}/connectors`,
+    }),
+
+    // Save per-user default connector for a chat (null = internal)
+    setChatDefaultConnector: build.mutation<
+      { data: { ok: boolean; connector_id: number | null; error?: string } },
+      { chatId: number; connectorId: number | null }
+    >({
+      query: ({ chatId, connectorId }) => ({
+        url: `/chats/${chatId}/default-connector`,
+        method: 'POST',
+        body: { connector_id: connectorId },
+      }),
     }),
 
     // Default email subject for a chat (last message subject or chat name)
@@ -1025,6 +1040,7 @@ export const {
   useLeaveChatMutation,
   useDeleteChatMutation,
   useGetChatConnectorsQuery,
+  useSetChatDefaultConnectorMutation,
   useGetChatEmailSubjectQuery,
   useGetChatMessagesQuery,
   useSendMessageMutation,

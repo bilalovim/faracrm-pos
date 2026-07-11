@@ -25,6 +25,8 @@
   "send": "Send",
   "selectConnector": "Select channel",
   "sendVia": "Send via",
+  "defaultConnector": "Default",
+  "setDefaultConnector": "Set as default",
   "attach": "Attach",
   "attachImage": "Image",
   "attachFile": "File",

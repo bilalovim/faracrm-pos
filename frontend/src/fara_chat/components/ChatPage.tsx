@@ -22,6 +22,7 @@ import {
   useGetChatsQuery,
   useGetPinnedMessagesQuery,
   useGetChatConnectorsQuery,
+  useSetChatDefaultConnectorMutation,
 } from '@/services/api/chat';
 import { useChatWebSocketContext } from '../context';
 import { ChatList } from './ChatList';
@@ -54,6 +55,10 @@ export function ChatPage({
   // На мобильном: true = показываем сайдбар, false = показываем чат
   const [showSidebar, setShowSidebar] = useState(true);
   const [selectedConnectorId, setSelectedConnectorId] = useState<number | null>(
+    null,
+  );
+  // Коннектор по умолчанию (per-user, из chat_member) — для галочки в свитчере.
+  const [defaultConnectorId, setDefaultConnectorId] = useState<number | null>(
     null,
   );
   const [newChatModalOpen, setNewChatModalOpen] = useState(false);
@@ -188,20 +193,32 @@ export function ChatPage({
 
   const availableConnectors = connectorsData?.data || [];
 
-  // При смене чата выбираем первый внешний коннектор (если есть) или internal
+  // При открытии чата подставляем СОХРАНЁННЫЙ коннектор по умолчанию (per-user
+  // из chat_member.default_connector_id); нет сохранённого → internal (null).
+  // Раньше авто-выбирался первый внешний — теперь дефолт задаёт пользователь
+  // галочкой в свитчере.
   useEffect(() => {
-    if (availableConnectors.length > 0) {
-      // Ищем первый не-internal коннектор
-      const externalConnector = availableConnectors.find(
-        c => c.connector_type !== 'internal' && c.connector_id !== null,
-      );
-      if (externalConnector) {
-        setSelectedConnectorId(externalConnector.connector_id);
-      } else {
-        setSelectedConnectorId(null); // internal
+    const saved = connectorsData?.default_connector_id ?? null;
+    setDefaultConnectorId(saved);
+    setSelectedConnectorId(saved);
+  }, [selectedChat?.id, connectorsData?.default_connector_id]);
+
+  const [saveDefaultConnector] = useSetChatDefaultConnectorMutation();
+  const handleSetDefaultConnector = useCallback(
+    async (cid: number | null) => {
+      if (!selectedChat) return;
+      setDefaultConnectorId(cid); // локально сразу — для галочки
+      try {
+        await saveDefaultConnector({
+          chatId: selectedChat.id,
+          connectorId: cid,
+        }).unwrap();
+      } catch {
+        // сохранить не удалось — оставляем как есть, юзер попробует снова
       }
-    }
-  }, [selectedChat?.id, availableConnectors.length]);
+    },
+    [selectedChat, saveDefaultConnector],
+  );
 
   // Открытие модалки pinned с refetch
   const handleOpenPinnedModal = () => {
@@ -528,6 +545,8 @@ export function ChatPage({
                 connectorId={selectedConnectorId ?? undefined}
                 connectors={availableConnectors}
                 onConnectorSelect={setSelectedConnectorId}
+                defaultConnectorId={defaultConnectorId}
+                onSetDefaultConnector={handleSetDefaultConnector}
                 onMessageSent={handleChatAreaClick}
               />
             </Box>

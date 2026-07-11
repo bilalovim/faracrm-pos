@@ -991,7 +991,48 @@ async def get_chat_connectors(req: Request, chat_id: int):
     chat = await env.models.chat.get(chat_id, fields=["id", "is_internal"])
 
     connectors = await chat.get_available_connectors(current_user_id=user_id)
-    return {"data": connectors}
+
+    # Коннектор по умолчанию текущего юзера в этом чате (галочка в свитчере).
+    # null = internal — подставляется при открытии чата на фронте.
+    member = await ChatMember.get_membership(chat_id, user_id)
+    default_connector_id = (
+        member.default_connector_id.id
+        if member and member.default_connector_id
+        else None
+    )
+    return {"data": connectors, "default_connector_id": default_connector_id}
+
+
+@router_private.post("/chats/{chat_id}/default-connector")
+async def set_chat_default_connector(req: Request, chat_id: int):
+    """
+    Сохранить коннектор по умолчанию для ТЕКУЩЕГО юзера в этом чате.
+
+    Тело: {"connector_id": <id> | null}. null = internal. Пишется в
+    chat_member.default_connector_id (per-user, как закрепление чата).
+    """
+    env: "Environment" = req.app.state.env
+    auth_session: "Session" = req.state.session
+    user_id = auth_session.user_id.id
+
+    payload = await req.json()
+    connector_id = (payload or {}).get("connector_id")
+
+    member = await ChatMember.get_membership(chat_id, user_id)
+    if not member:
+        return {"data": {"ok": False, "error": "not a member"}}
+
+    await member.update(
+        env.models.chat_member(
+            default_connector_id=(
+                env.models.chat_connector(id=connector_id)
+                if connector_id
+                else None
+            )
+        ),
+        fields=["default_connector_id"],
+    )
+    return {"data": {"ok": True, "connector_id": connector_id}}
 
 
 @router_private.get("/chats/{chat_id}/email-subject")

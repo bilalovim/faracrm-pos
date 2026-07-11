@@ -62,6 +62,9 @@ interface ChatInputProps {
   // Для ConnectorSwitcher (иконка выбора канала)
   connectors?: ConnectorOption[];
   onConnectorSelect?: (connectorId: number | null) => void;
+  // Коннектор по умолчанию (галочка в свитчере) + сохранение выбора default.
+  defaultConnectorId?: number | null;
+  onSetDefaultConnector?: (connectorId: number | null) => void;
   // Callback после отправки сообщения
   onMessageSent?: () => void;
 }
@@ -78,6 +81,8 @@ export function ChatInput({
   disabled,
   connectors,
   onConnectorSelect,
+  defaultConnectorId,
+  onSetDefaultConnector,
   onMessageSent,
 }: ChatInputProps) {
   const { t } = useTranslation('chat');
@@ -515,6 +520,8 @@ export function ChatInput({
             connectors={connectors}
             selectedConnectorId={connectorId ?? null}
             onSelect={onConnectorSelect}
+            defaultConnectorId={defaultConnectorId ?? null}
+            onSetDefault={onSetDefaultConnector}
             disabled={disabled}
           />
         )}

@@ -25,6 +25,8 @@
   "send": "Отправить",
   "selectConnector": "Выбрать канал",
   "sendVia": "Отправить через",
+  "defaultConnector": "По умолчанию",
+  "setDefaultConnector": "Сделать по умолчанию",
   "attach": "Прикрепить",
   "attachImage": "Изображение",
   "attachFile": "Файл",
