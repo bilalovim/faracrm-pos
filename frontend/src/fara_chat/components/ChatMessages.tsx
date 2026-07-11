@@ -55,6 +55,7 @@ import { useDispatch } from 'react-redux';
 import styles from './ChatMessages.module.css';
 import { EmailMessageContent } from './EmailMessageContent';
 import { CallMessageContent } from './CallMessageContent';
+import { connectorIcon } from './connectorMeta';
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👏'];
 
@@ -681,15 +682,28 @@ export function ChatMessages({
                                 {t('edited')}
                               </Text>
                             )}
-                            {message.connector_type && (
-                              <Text
-                                size="xs"
-                                c={
-                                  isOwnMessage(message) ? undefined : 'dimmed'
-                                }>
-                                via {message.connector_type}
-                              </Text>
-                            )}
+                            {/* Канал сообщения — маленькой иконкой у времени,
+                                единообразно для ВСЕХ внешних каналов (email,
+                                telegram, max…). Text-обёртка, чтобы иконка
+                                (currentColor) наследовала цвет текста бабла,
+                                включая тёмный у своего email-бабла. */}
+                            {message.connector_type &&
+                              message.connector_type !== 'internal' && (
+                                <Text
+                                  component="span"
+                                  c={
+                                    isOwnMessage(message)
+                                      ? undefined
+                                      : 'dimmed'
+                                  }
+                                  title={message.connector_type}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                  }}>
+                                  {connectorIcon(message.connector_type, 14)}
+                                </Text>
+                              )}
                             <Text
                               size="xs"
                               c={isOwnMessage(message) ? undefined : 'dimmed'}>

@@ -1,14 +1,7 @@
 import { ChatConnectorDetail } from '@/services/api/chat';
 import { ActionIcon, Menu, Tooltip, Text } from '@mantine/core';
-import {
-  IconBrandTelegram,
-  IconBrandWhatsapp,
-  IconMail,
-  IconMessage,
-} from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
-import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
-import { MaxIcon } from '@/fara_chat_max_bot/components/MaxIcon';
+import { connectorIcon, connectorColors } from './connectorMeta';
 
 export type ConnectorOption = ChatConnectorDetail;
 
@@ -18,42 +11,6 @@ interface ConnectorSwitcherProps {
   onSelect: (connectorId: number | null) => void;
   disabled?: boolean;
 }
-
-// SVG-логотип Avito отдаётся как URL (project resolves *.svg в строку),
-// поэтому рендерим через <img>. Размер совпадает с tabler-иконками (16px);
-// draggable=false чтобы внутри Menu.Item иконка не «отрывалась» при drag.
-const AvitoIcon = () => (
-  <img
-    src={avitoIconUrl}
-    width={16}
-    height={16}
-    alt="Avito"
-    draggable={false}
-    style={{ display: 'block' }}
-  />
-);
-
-const connectorIcons: Record<string, React.ReactNode> = {
-  internal: <IconMessage size={16} />,
-  telegram: <IconBrandTelegram size={16} />,
-  whatsapp: <IconBrandWhatsapp size={16} />,
-  email: <IconMail size={16} />,
-  avito: <AvitoIcon />,
-  max_bot: <MaxIcon />,
-  // max_wamm: <MaxIcon />,
-  max_business: <MaxIcon />,
-};
-
-const connectorColors: Record<string, string> = {
-  internal: 'gray',
-  telegram: 'blue',
-  whatsapp: 'green',
-  email: 'orange',
-  avito: 'lime',
-  max_bot: 'grape',
-  // max_wamm: 'grape',
-  max_business: 'grape',
-};
 
 /**
  * Переключатель коннектора — иконка канала в стиле микрофона/скрепки:
@@ -88,7 +45,7 @@ export function ConnectorSwitcher({
           size="lg"
           color={connectorColors[type] || 'gray'}
           disabled>
-          {connectorIcons[type] || <IconMessage size={16} />}
+          {connectorIcon(type, 16)}
         </ActionIcon>
       </Tooltip>
     );
@@ -102,7 +59,7 @@ export function ConnectorSwitcher({
             variant="subtle"
             size="lg"
             color={connectorColors[type] || 'gray'}>
-            {connectorIcons[type] || <IconMessage size={16} />}
+            {connectorIcon(type, 16)}
           </ActionIcon>
         </Tooltip>
       </Menu.Target>
@@ -111,11 +68,7 @@ export function ConnectorSwitcher({
         {connectors.map(connector => (
           <Menu.Item
             key={connector.connector_id ?? 'internal'}
-            leftSection={
-              connectorIcons[connector.connector_type] || (
-                <IconMessage size={16} />
-              )
-            }
+            leftSection={connectorIcon(connector.connector_type, 16)}
             onClick={() => onSelect(connector.connector_id)}
             color={
               connector.connector_id === selectedConnectorId

@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { Box, Text, Spoiler, Anchor, ActionIcon, Tooltip } from '@mantine/core';
-import { IconExternalLink, IconMail } from '@tabler/icons-react';
 import DOMPurify from 'dompurify';
 import styles from './EmailMessageContent.module.css';
 
@@ -95,12 +94,13 @@ export function EmailMessageContent({
   if (isLongContent) {
     return (
       <Box className={styles.emailContent}>
-        <Box className={styles.emailHeader}>
-          <IconMail size={14} />
-          <Text size="xs" c="dimmed" fw={subject ? 600 : 400} lineClamp={1}>
-            {subject || 'Email message'}
-          </Text>
-        </Box>
+        {subject && (
+          <Box className={styles.emailHeader}>
+            <Text size="xs" fw={600} lineClamp={1}>
+              {subject}
+            </Text>
+          </Box>
+        )}
         <Spoiler 
           maxHeight={maxHeight} 
           showLabel="Показать полностью"
@@ -123,10 +123,13 @@ export function EmailMessageContent({
 
   return (
     <Box className={styles.emailContent}>
-      <Box className={styles.emailHeader}>
-        <IconMail size={14} />
-        <Text size="xs" c="dimmed">Email message</Text>
-      </Box>
+      {subject && (
+        <Box className={styles.emailHeader}>
+          <Text size="xs" fw={600} lineClamp={1}>
+            {subject}
+          </Text>
+        </Box>
+      )}
       <div 
         className={styles.emailBody}
         dangerouslySetInnerHTML={{ __html: sanitizedHtml }} 
