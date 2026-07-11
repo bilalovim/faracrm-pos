@@ -1,5 +1,5 @@
 import { ChatConnectorDetail } from '@/services/api/chat';
-import { ActionIcon, Menu, Tooltip, Text, Group } from '@mantine/core';
+import { ActionIcon, Button, Menu, Tooltip, Text } from '@mantine/core';
 import {
   IconBrandTelegram,
   IconBrandWhatsapp,
@@ -91,17 +91,21 @@ export function ConnectorSwitcher({
     <Menu position="top-start" withArrow disabled={disabled}>
       <Menu.Target>
         <Tooltip label={t('selectConnector')}>
-          <ActionIcon
-            variant="light"
-            size="lg"
-            color={connectorColors[selectedConnector.connector_type] || 'gray'}>
-            <Group gap={2}>
-              {connectorIcons[selectedConnector.connector_type] || (
-                <IconMessage size={16} />
-              )}
-              <IconChevronDown size={12} />
-            </Group>
-          </ActionIcon>
+          {/* Несколько коннекторов → пилюля-дропдаун: иконка + стрелка в ряд.
+              Ширина авто (не квадрат), высота 34 как у соседних кнопок —
+              паре «иконка+стрелка» просторно, ничего не наезжает и не съезжает. */}
+          <Button
+            variant="subtle"
+            color={connectorColors[selectedConnector.connector_type] || 'gray'}
+            h={34}
+            px={8}
+            radius="sm"
+            rightSection={<IconChevronDown size={12} />}
+            styles={{ section: { marginInlineStart: 4 } }}>
+            {connectorIcons[selectedConnector.connector_type] || (
+              <IconMessage size={16} />
+            )}
+          </Button>
         </Tooltip>
       </Menu.Target>
       <Menu.Dropdown>
