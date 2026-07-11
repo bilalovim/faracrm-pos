@@ -23,6 +23,8 @@
   "startConversation": "Start a conversation by sending a message",
   "typeMessage": "Type a message...",
   "send": "Send",
+  "selectConnector": "Select channel",
+  "sendVia": "Send via",
   "attach": "Attach",
   "attachImage": "Image",
   "attachFile": "File",

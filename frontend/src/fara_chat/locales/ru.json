@@ -23,6 +23,8 @@
   "startConversation": "Начните разговор, отправив сообщение",
   "typeMessage": "Введите сообщение...",
   "send": "Отправить",
+  "selectConnector": "Выбрать канал",
+  "sendVia": "Отправить через",
   "attach": "Прикрепить",
   "attachImage": "Изображение",
   "attachFile": "Файл",

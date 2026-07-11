@@ -59,7 +59,7 @@ interface ChatInputProps {
   onTyping?: () => void;
   connectorId?: number;
   disabled?: boolean;
-  // Для ConnectorSwitcher
+  // Для ConnectorSwitcher (иконка выбора канала)
   connectors?: ConnectorOption[];
   onConnectorSelect?: (connectorId: number | null) => void;
   // Callback после отправки сообщения
@@ -509,7 +509,7 @@ export function ChatInput({
           />
         )}
 
-        {/* Переключатель коннектора */}
+        {/* Переключатель коннектора — иконка канала (subtle, как микрофон). */}
         {connectors && connectors.length > 1 && onConnectorSelect && (
           <ConnectorSwitcher
             connectors={connectors}

@@ -1,15 +1,16 @@
 import { ChatConnectorDetail } from '@/services/api/chat';
-import { ActionIcon, Button, Menu, Tooltip, Text } from '@mantine/core';
+import { ActionIcon, Menu, Tooltip, Text } from '@mantine/core';
 import {
   IconBrandTelegram,
   IconBrandWhatsapp,
   IconMail,
   IconMessage,
-  IconChevronDown,
 } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 import { MaxIcon } from '@/fara_chat_max_bot/components/MaxIcon';
+
+export type ConnectorOption = ChatConnectorDetail;
 
 interface ConnectorSwitcherProps {
   connectors: ChatConnectorDetail[];
@@ -54,6 +55,12 @@ const connectorColors: Record<string, string> = {
   max_business: 'grape',
 };
 
+/**
+ * Переключатель коннектора — иконка канала в стиле микрофона/скрепки:
+ * variant="subtle" (без фона и границы), поэтому не выделяется в ряду ввода.
+ * Клик открывает меню выбора канала (как «скрепка» открывает меню вложений).
+ * Стрелки нет намеренно — она ломала центрирование и добавляла «кнопочность».
+ */
 export function ConnectorSwitcher({
   connectors,
   selectedConnectorId,
@@ -70,18 +77,18 @@ export function ConnectorSwitcher({
     return null;
   }
 
-  // Если только один коннектор - не показываем выбор
+  const type = selectedConnector.connector_type;
+
+  // Один коннектор — просто иконка канала, без выбора.
   if (connectors.length <= 1) {
     return (
       <Tooltip label={selectedConnector.connector_name}>
         <ActionIcon
           variant="subtle"
           size="lg"
-          color={connectorColors[selectedConnector.connector_type] || 'gray'}
+          color={connectorColors[type] || 'gray'}
           disabled>
-          {connectorIcons[selectedConnector.connector_type] || (
-            <IconMessage size={16} />
-          )}
+          {connectorIcons[type] || <IconMessage size={16} />}
         </ActionIcon>
       </Tooltip>
     );
@@ -91,21 +98,12 @@ export function ConnectorSwitcher({
     <Menu position="top-start" withArrow disabled={disabled}>
       <Menu.Target>
         <Tooltip label={t('selectConnector')}>
-          {/* Несколько коннекторов → пилюля-дропдаун: иконка + стрелка в ряд.
-              Ширина авто (не квадрат), высота 34 как у соседних кнопок —
-              паре «иконка+стрелка» просторно, ничего не наезжает и не съезжает. */}
-          <Button
+          <ActionIcon
             variant="subtle"
-            color={connectorColors[selectedConnector.connector_type] || 'gray'}
-            h={34}
-            px={8}
-            radius="sm"
-            rightSection={<IconChevronDown size={12} />}
-            styles={{ section: { marginInlineStart: 4 } }}>
-            {connectorIcons[selectedConnector.connector_type] || (
-              <IconMessage size={16} />
-            )}
-          </Button>
+            size="lg"
+            color={connectorColors[type] || 'gray'}>
+            {connectorIcons[type] || <IconMessage size={16} />}
+          </ActionIcon>
         </Tooltip>
       </Menu.Target>
       <Menu.Dropdown>
