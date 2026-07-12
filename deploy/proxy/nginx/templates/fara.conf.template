@@ -101,8 +101,14 @@ server {
     }
 
     # ── / → frontend (всё остальное, включая SPA-роутинг) ──────────
+    # Хост в переменной + resolver наверху → nginx резолвит frontend
+    # В РАНТАЙМЕ, а не на старте. Иначе, если контейнер frontend не
+    # резолвится в момент запуска/reload nginx, весь proxy падает с
+    # "[emerg] host not found in upstream frontend" и не поднимается.
+    # С переменной вместо этого будет 502, пока фронт не поднимется.
     location / {
-        proxy_pass http://frontend:80;
+        set $frontend_upstream "frontend:80";
+        proxy_pass http://$frontend_upstream;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
