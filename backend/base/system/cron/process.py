@@ -241,7 +241,13 @@ class CronProcess:
 
     async def _write_heartbeat(self) -> None:
         try:
-            payload = json.dumps(datetime.now(timezone.utc).isoformat())
+            # value хранится как JSON-объект {"value": ...} — такова конвенция
+            # SystemSettings (см. get_value/set_value). Голый скаляр (строка-дата)
+            # ломает схему ответа /auto/system_settings/search (value: dict|list|None)
+            # и роняет страницу настроек с ResponseValidationError.
+            payload = json.dumps(
+                {"value": datetime.now(timezone.utc).isoformat()}
+            )
             async with self.pool.acquire() as conn:
                 await conn.execute(
                     """
