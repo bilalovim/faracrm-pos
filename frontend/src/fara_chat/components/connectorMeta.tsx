@@ -6,6 +6,7 @@ import {
 } from '@tabler/icons-react';
 import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 import { MaxIcon } from '@/fara_chat_max_bot/components/MaxIcon';
+import { VkIcon } from '@/fara_chat_vk/components/VkIcon';
 
 // SVG-логотип Avito отдаётся как URL (project resolves *.svg в строку).
 // draggable=false — чтобы иконка не «отрывалась» при drag внутри Menu.Item.
@@ -30,6 +31,7 @@ export const connectorColors: Record<string, string> = {
   max_bot: 'grape',
   // max_wamm: 'grape',
   max_business: 'grape',
+  vk: 'indigo',
 };
 
 /**
@@ -53,6 +55,8 @@ export function connectorIcon(
     case 'max_bot':
     case 'max_business':
       return <MaxIcon size={size} />;
+    case 'vk':
+      return <VkIcon size={size} />;
     default:
       return <IconMessage size={size} />;
   }

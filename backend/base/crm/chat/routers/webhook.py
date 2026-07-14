@@ -121,4 +121,12 @@ async def chat_webhook(
         env=env,
     )
 
+    # 6. Формируем HTTP-ответ.
+    # Большинство провайдеров довольствуются JSON {"ok": true}. Но некоторые
+    # (VK Callback API) требуют ПРОСТОЙ ТЕКСТ: строку-код на type="confirmation"
+    # и "ok" на остальные события — JSON они не принимают. Поэтому если стратегия
+    # вернула str, отдаём его как PlainTextResponse; dict — как раньше, JSON.
+    if isinstance(result, str):
+        return PlainTextResponse(result, status_code=HTTP_200_OK)
+
     return JSONResponse(content=result, status_code=HTTP_200_OK)

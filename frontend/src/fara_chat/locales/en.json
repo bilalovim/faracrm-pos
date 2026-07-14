@@ -157,6 +157,8 @@
       "wammToken": "WAMM API Token",
       "maxBusinessToken": "MAX Business token",
       "maxBusinessId": "MAX Business account ID",
+      "vkToken": "Community access token",
+      "vkGroupId": "Community ID (group_id)",
       "leadType": "Lead Type",
       "lastResponse": "Last Response",
       "createDate": "Created",
@@ -188,7 +190,8 @@
       "telegram": "Telegram Bot",
       "maxBot": "MAX Bot",
       "maxWamm": "MAX via WAMM.chat",
-      "maxBusiness": "MAX for Business (official)"
+      "maxBusiness": "MAX for Business (official)",
+      "vk": "VK (VKontakte)"
     },
     "actions": {
       "setWebhook": "Set Webhook",
@@ -236,6 +239,10 @@
     "maxBusiness": {
       "hint": "Official \"MAX for Business\" channel: you can message the client first by phone number. Requires a verified business account (business.max.ru).",
       "noAuthRequired": "MAX Business uses a business-account token. Configure it in the \"Connection\" tab."
+    },
+    "vk": {
+      "hint": "VKontakte community integration via Callback API: users message the community, replies are addressed by their id.",
+      "noAuthRequired": "VK uses a community access token for authorization. Configure it in the \"Connection\" tab."
     },
     "telegram": {
       "noAuthRequired": "Telegram uses Bot Token for authorization. Configure it in the \"Connection\" tab."

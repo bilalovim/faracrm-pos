@@ -8,6 +8,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 import { MaxIcon } from '@/fara_chat_max_bot/components/MaxIcon';
+import { VkIcon } from '@/fara_chat_vk/components/VkIcon';
 
 interface ConnectorFilterProps {
   value: string;
@@ -38,6 +39,7 @@ const connectorIcons: Record<string, React.ReactNode> = {
   max_bot: <MaxIcon />,
   // max_wamm: <MaxIcon />,
   max_business: <MaxIcon />,
+  vk: <VkIcon />,
 };
 
 // Названия типов коннекторов
@@ -50,6 +52,7 @@ const connectorLabels: Record<string, string> = {
   max_bot: 'MAX (бот)',
   // max_wamm: 'MAX (WAMM)',
   max_business: 'MAX Business',
+  vk: 'ВКонтакте',
 };
 
 export function ConnectorFilter({
@@ -80,7 +83,9 @@ export function ConnectorFilter({
                         ? 'grape'
                         : type === 'max_business'
                           ? 'grape'
-                          : 'gray'
+                          : type === 'vk'
+                            ? 'indigo'
+                            : 'gray'
             }>
             {connectorIcons[type] || <IconApps size={16} />}
           </ThemeIcon>

@@ -157,6 +157,8 @@
       "wammToken": "WAMM API Token",
       "maxBusinessToken": "MAX Business токен",
       "maxBusinessId": "MAX Business Ид аккаунта",
+      "vkToken": "Ключ доступа сообщества",
+      "vkGroupId": "ID сообщества (group_id)",
       "leadType": "Тип лида",
       "lastResponse": "Последний ответ",
       "createDate": "Дата создания",
@@ -188,7 +190,8 @@
       "telegram": "Telegram Bot",
       "maxBot": "MAX Bot",
       "maxWamm": "MAX через WAMM.chat",
-      "maxBusiness": "MAX для бизнеса (официальный)"
+      "maxBusiness": "MAX для бизнеса (официальный)",
+      "vk": "ВКонтакте"
     },
     "actions": {
       "setWebhook": "Установить Webhook",
@@ -236,6 +239,10 @@
     "maxBusiness": {
       "hint": "Официальный канал «MAX для бизнеса»: можно писать клиенту первым по номеру телефона. Нужен верифицированный бизнес-аккаунт (business.max.ru).",
       "noAuthRequired": "MAX Business использует токен бизнес-аккаунта. Настройте его во вкладке \"Подключение\"."
+    },
+    "vk": {
+      "hint": "Интеграция с сообществом ВКонтакте через Callback API: пользователи пишут в сообщество, ответ адресуется по их id.",
+      "noAuthRequired": "ВКонтакте использует ключ доступа сообщества для авторизации. Настройте его во вкладке \"Подключение\"."
     },
     "telegram": {
       "noAuthRequired": "Telegram использует Bot Token для авторизации. Настройте его во вкладке \"Подключение\"."

@@ -75,6 +75,7 @@ from backend.base.crm.chat_max_bot.mixins import ChatConnectorMaxBotMixin
 from backend.base.crm.chat_max_business.mixins import (
     ChatConnectorMaxBusinessMixin,
 )
+from backend.base.crm.chat_vk.mixins import ChatConnectorVkMixin
 from backend.base.crm.chat_whatsapp_chatapp.mixins import (
     ChatConnectorWhatsAppChatAppMixin,
 )
@@ -121,6 +122,7 @@ if TYPE_CHECKING:
         ChatConnectorAvitoMixin,
         ChatConnectorMaxBotMixin,
         ChatConnectorMaxBusinessMixin,
+        ChatConnectorVkMixin,
         ChatConnectorWhatsAppChatAppMixin,
         ChatConnectorEmailMixin,
         ChatConnectorBase,
@@ -199,6 +201,7 @@ from backend.base.crm.chat_phone_megafon.app import ChatPhoneMegafonApp
 from backend.base.crm.chat_avito.app import ChatAvitoApp
 from backend.base.crm.chat_max_bot.app import ChatMaxBotApp
 from backend.base.crm.chat_max_business.app import ChatMaxBusinessApp
+from backend.base.crm.chat_vk.app import ChatVkApp
 from backend.base.crm.tasks.app import TasksApp
 from backend.base.crm.activity.app import ActivityApp
 from backend.base.crm.report_docx.app import ReportDocxApp
@@ -323,6 +326,7 @@ class Apps(AppsCore):
     chat_avito = ChatAvitoApp()
     chat_max_bot = ChatMaxBotApp()
     chat_max_business = ChatMaxBusinessApp()
+    chat_vk = ChatVkApp()
     task = TasksApp()
     activity = ActivityApp()
     report_docx = ReportDocxApp()

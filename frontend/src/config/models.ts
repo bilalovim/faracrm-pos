@@ -158,6 +158,7 @@ export const modelsConfig: Record<string, ModelConfig> = {
       () => import('@/fara_chat_max_bot'),
       // () => import('@/fara_chat_max_wamm'),
       () => import('@/fara_chat_max_business'),
+      () => import('@/fara_chat_vk'),
       () => import('@/fara_chat_email'),
     ],
   },

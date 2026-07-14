@@ -31,6 +31,7 @@ import { ChatFolder, useGetFolderUnreadQuery } from '@/services/api/chat';
 import { FolderModal } from '@/fara_chat/components/FolderModal';
 import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 import { MaxIcon } from '@/fara_chat_max_bot/components/MaxIcon';
+import { VkIcon } from '@/fara_chat_vk/components/VkIcon';
 import classes from './ChatSidebar.module.css';
 
 // Папки чатов = записи модели chat_folder (общий auto-CRUD). Правила доступа
@@ -59,6 +60,7 @@ const CONNECTOR_ICONS: Record<string, React.ReactNode> = {
   avito: <AvitoIcon />,
   max_bot: <MaxIcon />,
   max_business: <MaxIcon />,
+  vk: <VkIcon size={18} />,
 };
 
 const FOLDER_FIELDS = [
