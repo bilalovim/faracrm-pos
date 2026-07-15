@@ -335,6 +335,10 @@ class Session(DotModel):
         # запрос (один CTE), поэтому инвалидация тут не нужна.
         codes = await env.models.user.get_all_role_codes(session_id["user_id"])
         self._set_role_codes(session_obj, codes)
+        team_ids = await env.models.user.get_all_team_ids(
+            session_id["user_id"]
+        )
+        self._set_team_ids(session_obj, team_ids)
         return session_obj
 
     @hybridmethod
@@ -456,6 +460,8 @@ class Session(DotModel):
         # ролей запись инвалидируется через шину → следующий запрос
         # пересоберёт кэш со свежими кодами.
         self._set_role_codes(session_obj, cached.role_codes)
+        # Команды — тем же путём (инвалидация тоже через publish_roles_changed).
+        self._set_team_ids(session_obj, cached.team_ids)
         return session_obj
 
     @hybridmethod
@@ -532,6 +538,7 @@ class Session(DotModel):
         # Развёрнутые коды ролей кладём в кэш — чтобы field-level проверка
         # на cache-hit не ходила в БД. Обновляются через invalidate_user.
         codes = await env.models.user.get_all_role_codes(row["user_id"])
+        team_ids = await env.models.user.get_all_team_ids(row["user_id"])
         cached = CachedSession(
             session_id=row["id"],
             user_id=row["user_id"],
@@ -545,6 +552,7 @@ class Session(DotModel):
             ttl=row["ttl"],
             create_datetime=row["create_datetime"],
             role_codes=tuple(codes),
+            team_ids=tuple(team_ids),
         )
         await cache.put(cached)
         return cached
@@ -626,6 +634,18 @@ class Session(DotModel):
         """
         session_obj.user_id.role_ids = [
             env.models.role(code=c) for c in (codes or ())
+        ]
+
+    @staticmethod
+    def _set_team_ids(session_obj: "Session", team_ids) -> None:
+        """Кладёт команды пользователя в сессию как team_crm(id=...).
+
+        Доступ по командам (check_access → {{team_ids}}) читает их прямо из
+        session.user_id.team_ids — без запроса в БД на каждую проверку.
+        Инвалидация — publish_roles_changed (команды = authz-атрибут).
+        """
+        session_obj.user_id.team_ids = [
+            env.models.team_crm(id=t) for t in (team_ids or ())
         ]
 
     @classmethod

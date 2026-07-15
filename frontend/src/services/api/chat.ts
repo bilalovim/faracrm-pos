@@ -16,6 +16,7 @@ const chatApi = api.injectEndpoints({
           ...(args?.chat_type && { chat_type: args.chat_type }),
           ...(args?.connector_type && { connector_type: args.connector_type }),
           ...(args?.folder_id !== undefined && { folder_id: args.folder_id }),
+          ...(args?.scope && { scope: args.scope }),
           ...(args?.include_deleted && { include_deleted: 1 }),
           ...(args?.include_record && { include_record: 1 }),
           ...(args?.include_foreign && { include_foreign: 1 }),
@@ -799,6 +800,8 @@ export interface GetChatsArgs {
   connector_type?: string;
   /** Фильтр по папке чатов пользователя (chat_folder.id). */
   folder_id?: number;
+  /** Внешние чаты: 'mine' = где я участник, 'all' = мои команды + членство. */
+  scope?: 'mine' | 'all';
   include_deleted?: boolean;
   include_record?: boolean;
   /** Admin-only: показать чужие чаты (где user не мембер). */
@@ -862,6 +865,10 @@ export interface SendMessageArgs {
   // выводит connector_type из connector_id.
   connector_type?: string;
   parent_id?: number;
+  // Теги: к какому лиду/задаче относится исходящее (панель чата партнёра на
+  // форме проставляет). Уходят в тело POST → message.lead_id / message.task_id.
+  lead_id?: number | null;
+  task_id?: number | null;
   attachments?: SendMessageAttachment[];
 }
 
@@ -989,6 +996,57 @@ const recordChatApi = api.injectEndpoints({
   overrideExisting: false,
 });
 
+// ====================== ЧАТ ПАРТНЁРА (1:1) ======================
+//
+// Модель 1:1: у партнёра ОДИН внешний групповой чат. Панель на форме
+// лида/партнёра резолвит его id и показывает обычным чат-компонентом
+// (ChatMessages + ChatInput). Отдельной «ленты»/агрегации нет — доступ идёт
+// через штатные правила чата (членство / team). resolve БЕЗ создания (пустой
+// чат на открытие не плодим); чат создаётся при первом входящем/ответе.
+
+const partnerChatApi = api.injectEndpoints({
+  endpoints: build => ({
+    // Найти чат партнёра (без создания). { chat_id: null } → чата ещё нет.
+    resolvePartnerChat: build.query<
+      { chat_id: number | null; partner_id: number },
+      { partnerId: number }
+    >({
+      query: ({ partnerId }) => `/partners/${partnerId}/chat`,
+    }),
+
+    // Как resolvePartnerChat, но партнёр берётся из лида (lead.partner_id).
+    resolveLeadChat: build.query<
+      { chat_id: number | null; partner_id: number | null },
+      { leadId: number }
+    >({
+      query: ({ leadId }) => `/leads/${leadId}/chat`,
+    }),
+
+    // Создать (get-or-create) групповой чат партнёра — кнопка «Создать чат».
+    createPartnerChat: build.mutation<
+      { chat_id: number; partner_id: number },
+      { partnerId: number }
+    >({
+      query: ({ partnerId }) => ({
+        url: `/partners/${partnerId}/chat`,
+        method: 'POST',
+      }),
+    }),
+
+    // Недавние теги чата (лиды/задачи) — для селектора тега при ответе.
+    getChatTags: build.query<
+      { data: { lead_ids: number[]; task_ids: number[] } },
+      { chatId: number; limit?: number }
+    >({
+      query: ({ chatId, limit }) => ({
+        url: `/chats/${chatId}/tags`,
+        params: { limit: limit || 5 },
+      }),
+    }),
+  }),
+  overrideExisting: false,
+});
+
 // ====================== CHAT FOLDERS + PIN ======================
 //
 // Папки чатов управляются через ОБЩИЙ auto-CRUD (/auto/chat_folder/*) —
@@ -1040,8 +1098,14 @@ const folderApi = api.injectEndpoints({
   overrideExisting: false,
 });
 
-export { chatApi, recordChatApi, folderApi };
+export { chatApi, recordChatApi, folderApi, partnerChatApi };
 export const { usePinChatMutation, useGetFolderUnreadQuery } = folderApi;
+export const {
+  useResolvePartnerChatQuery,
+  useResolveLeadChatQuery,
+  useGetChatTagsQuery,
+  useCreatePartnerChatMutation,
+} = partnerChatApi;
 export const {
   useGetChatsQuery,
   useGetChatQuery,

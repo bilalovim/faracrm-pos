@@ -89,6 +89,15 @@ export function ViewFormTeamCrm(props: ViewFormProps) {
           <Field name="name" label="Название" />
         </FormRow>
       </FormSection>
+      {/* Участники команды. team_crm.update(user_ids) инвалидирует их сессии
+          (publish_roles_changed) → пересчёт {{team_ids}} для доступа к чатам. */}
+      <FormSection title="Пользователи" icon={<IconUser size={18} />}>
+        <Field name="user_ids" showSelect label="Пользователи">
+          <Field name="id" />
+          <Field name="name" />
+          <Field name="login" />
+        </Field>
+      </FormSection>
     </Form>
   );
 }

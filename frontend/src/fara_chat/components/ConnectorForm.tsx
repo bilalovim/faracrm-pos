@@ -106,6 +106,14 @@ export function ConnectorForm(props: ViewFormProps) {
           icon={<IconSettings size={16} />}>
           <FormSection title={t('connector.groups.leadSettings')}>
             <FormRow cols={2}>
+              {/* Команда-владелец создаваемых чатов (team-scoped доступ:
+                  chat.team_id ← connector.team_id при создании чата). */}
+              <Field
+                name="team_id"
+                label={t('connector.fields.team', 'Команда')}
+              />
+            </FormRow>
+            <FormRow cols={2}>
               <Field name="lead_type" label={t('connector.fields.leadType')} />
               <Field
                 name="lead_stage_id"

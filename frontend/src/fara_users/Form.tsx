@@ -18,6 +18,7 @@ import {
   IconLock,
   IconCopy,
   IconSettings,
+  IconUsers,
 } from '@tabler/icons-react';
 import { FormActions, FormAction } from '@/components/Form/FormActions';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -156,6 +157,18 @@ export default function ViewFormUsers(props: ViewFormProps) {
               <Field name="id" label={t('fields.id')} />
               <Field name="name" label={t('fields.name')} />
               <Field name="user_ids" label={t('role_ids.user_ids')} />
+            </Field>
+          </FormTab>
+
+          {/* Команды пользователя (team_ids). Обратная сторона team_crm.user_ids
+              — источник {{team_ids}} для доступа к внешним чатам по командам. */}
+          <FormTab
+            name="teams"
+            label={t('tabs.teams', 'Команды')}
+            icon={<IconUsers size={16} />}>
+            <Field name="team_ids" showSelect label="">
+              <Field name="id" label={t('fields.id')} />
+              <Field name="name" label={t('fields.name')} />
             </Field>
           </FormTab>
 

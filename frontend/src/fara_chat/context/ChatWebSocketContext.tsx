@@ -183,6 +183,8 @@ export function ChatWebSocketProvider({
               },
             ),
           );
+          // Панель чата партнёра рендерит тот же getChatMessages(chatId), что и
+          // основной чат — отдельного feed-кэша больше нет (модель 1:1).
         }
       }
 

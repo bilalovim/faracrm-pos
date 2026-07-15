@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from backend.base.crm.users.models.users import User
     from backend.base.crm.partners.models.partners import Partner
     from backend.base.crm.chat.models.chat_connector import ChatConnector
+    from .team_crm import TeamCrm
     from .lead_stage import LeadStage
 
 import logging
@@ -74,6 +75,17 @@ class Lead(AuditMixin, PolymorphicParentMixin):
         description="Коннектор, через который создан лид",
     )
 
+    # Команда лида. Раньше strategy._get_or_create_lead писал team_id из
+    # правила маршрутизации, но поля не было → значение молча терялось.
+    # Добавлено как реальное поле (правило маршрутизации теперь работает).
+    team_id: "TeamCrm | None" = Many2one(
+        relation_table=lambda: env.models.team_crm,
+        string="Team",
+        ondelete="set null",
+        index=True,
+        description="Команда, ответственная за лид",
+    )
+
     website: str | None = Char(
         max_length=500,
         string="Website URL",
@@ -133,6 +145,23 @@ class Lead(AuditMixin, PolymorphicParentMixin):
                     await env.models.chat._ensure_membership(
                         ec.chat_id.id, payload.user_id.id
                     )
+                    # _ensure_membership добавляет DB-участника, но НЕ
+                    # подписывает live WS-сессию ответственного и не шлёт ему
+                    # chat_created → без этого диалог всплывает у него только
+                    # после рефреша. notify_new_chat (cross-worker через
+                    # pubsub) подписывает его WS на любом воркере и уведомляет
+                    # фронт. Best-effort: сбой не должен ломать обновление лида.
+                    try:
+                        await env.apps.chat.chat_manager.notify_new_chat(
+                            payload.user_id.id, ec.chat_id.id
+                        )
+                    except Exception as notify_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Lead %s: notify_new_chat failed for chat %s: %s",
+                            self.id,
+                            ec.chat_id.id,
+                            notify_exc,
+                        )
         except Exception as exc:  # noqa: BLE001
             # Подписка не должна ломать обновление лида.
             logger.warning(

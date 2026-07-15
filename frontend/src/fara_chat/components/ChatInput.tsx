@@ -67,6 +67,10 @@ interface ChatInputProps {
   onSetDefaultConnector?: (connectorId: number | null) => void;
   // Callback после отправки сообщения
   onMessageSent?: () => void;
+  // Теги: к какому лиду/задаче привязать исходящее (панель чата партнёра на
+  // форме лида/задачи проставляет автоматически). Уходят в message.lead_id/task_id.
+  leadId?: number | null;
+  taskId?: number | null;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -84,6 +88,8 @@ export function ChatInput({
   defaultConnectorId,
   onSetDefaultConnector,
   onMessageSent,
+  leadId,
+  taskId,
 }: ChatInputProps) {
   const { t } = useTranslation('chat');
   const [message, setMessage] = useState('');
@@ -158,6 +164,8 @@ export function ChatInput({
           body: ' ',
           connector_id: connectorId,
           connector_type: selectedConnectorType,
+          lead_id: leadId,
+          task_id: taskId,
           currentUserId,
           currentUserName,
           attachments: [pendingVoice],

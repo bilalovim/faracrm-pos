@@ -13,6 +13,7 @@ from backend.base.system.dotorm.dotorm.fields import (
     Boolean,
     Datetime,
     Selection,
+    Many2one,
     One2many,
 )
 from backend.base.system.dotorm.dotorm.model import DotModel
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from backend.base.crm.chat.models.chat_external_chat import (
         ChatExternalChat,
     )
+    from backend.base.crm.leads.models.team_crm import TeamCrm
 
 
 # Права по умолчанию для разных типов чатов
@@ -181,6 +183,17 @@ class Chat(AuditMixin, DotModel):
     )
     res_id: int | None = Integer(
         description="ID записи — для record-чатов",
+    )
+
+    # Команда-владелец чата — ось team-scoped доступа. Штампуется из
+    # connector.team_id при создании клиентского чата. NULL у внутренних чатов
+    # (is_internal=true) → в team-гейт не попадают, видны только по членству.
+    # index=True: get_chats фильтрует c.team_id = ANY(...) на каждый рендер.
+    team_id: "TeamCrm | None" = Many2one(
+        relation_table=lambda: env.models.team_crm,
+        ondelete="set null",
+        index=True,
+        description="Команда-владелец чата (team-scoped доступ)",
     )
 
     def get_default_permissions(self) -> dict:
@@ -478,6 +491,105 @@ class Chat(AuditMixin, DotModel):
             await env.apps.chat.chat_manager.notify_new_chat(user_id, chat.id)
         except Exception as e:
             logger.warning("Failed to send a websocket message: %s", e)
+
+        return chat
+
+    @hybridmethod
+    async def find_partner_group_chat(self, partner_id: int) -> "Chat | None":
+        """ЕДИНСТВЕННЫЙ внешний ГРУППОВОЙ чат партнёра (модель 1:1). Без
+        создания — для открытия панели (не плодим пустой чат на просмотр).
+        Если чата нет — панель предлагает кнопку «Создать чат». При нескольких
+        берём самый свежий по последнему сообщению."""
+        session = self._get_db_session()
+        rows = await session.execute(
+            """
+            SELECT c.id, c.name FROM chat c
+            JOIN chat_member cm ON cm.chat_id = c.id
+                AND cm.partner_id = %s AND cm.is_active = true
+            WHERE c.chat_type = 'group'
+              AND c.is_internal = false AND c.active = true
+            ORDER BY c.last_message_date DESC NULLS LAST, c.id DESC
+            LIMIT 1
+            """,
+            (partner_id,),
+        )
+        if rows:
+            return Chat(id=rows[0]["id"], name=rows[0]["name"])
+        return None
+
+    @hybridmethod
+    async def get_or_create_partner_chat(
+        self, partner_id: int, connector=None, partner_name: str | None = None
+    ) -> "Chat":
+        """Найти-или-создать ЕДИНСТВЕННЫЙ внешний групповой чат партнёра (1:1).
+
+        advisory-lock по партнёру защищает от гонки (два первых сообщения /
+        первый ответ одновременно). connector (опц.) даёт team_id и manager_ids
+        новому чату: команда — ось team-scoped доступа, руководители —
+        участники по умолчанию. Уведомление руководителей — вне транзакции.
+        """
+        from backend.base.crm.users.models.users import SYSTEM_USER_ID
+
+        existing = await self.find_partner_group_chat(partner_id)
+        if existing:
+            return existing
+
+        managers: list = []
+        async with env.apps.db.get_transaction() as session:
+            await session.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
+                ("chat:partner", partner_id),
+            )
+            # re-check под локом
+            existing = await self.find_partner_group_chat(partner_id)
+            if existing:
+                return existing
+
+            team = None
+            if connector is not None:
+                conns = await env.models.chat_connector.search(
+                    filter=[("id", "=", connector.id)],
+                    fields=["id", "manager_ids", "team_id"],
+                    limit=1,
+                )
+                if conns:
+                    managers = conns[0].manager_ids or []
+                    team = conns[0].team_id
+
+            default_perms = DEFAULT_PERMISSIONS["group"]
+            now = datetime.now(timezone.utc)
+            chat = Chat(
+                name=partner_name or f"partner:{partner_id}",
+                chat_type="group",
+                is_internal=False,
+                team_id=team,
+                create_user_id=env.models.user(id=SYSTEM_USER_ID),
+                create_datetime=now,
+                update_datetime=now,
+                default_can_read=default_perms["can_read"],
+                default_can_write=default_perms["can_write"],
+                default_can_invite=default_perms["can_invite"],
+                default_can_pin=default_perms["can_pin"],
+                default_can_delete_others=default_perms["can_delete_others"],
+            )
+            chat.id = await self.create(payload=chat)
+            await self._add_partner_member(chat.id, partner_id, default_perms)
+            for m in managers or []:
+                uid = m.id
+                if uid:
+                    await self._add_user_member(chat.id, uid, default_perms)
+
+        # Подписываем руководителей на WS (вне транзакции) — чтобы новый чат
+        # прилетал вживую (иначе виден только после рефреша).
+        for m in managers or []:
+            uid = m.id
+            if uid:
+                try:
+                    await env.apps.chat.chat_manager.notify_new_chat(
+                        uid, chat.id
+                    )
+                except Exception as e:
+                    logger.warning("notify_new_chat failed: %s", e)
 
         return chat
 

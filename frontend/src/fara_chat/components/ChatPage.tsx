@@ -120,6 +120,7 @@ export function ChatPage({
   const chatTypeParam = searchParams.get('chat_type');
   const connectorTypeParam = searchParams.get('connector_type');
   const folderIdParam = searchParams.get('folder_id');
+  const scopeParam = searchParams.get('scope');
 
   // Формируем фильтр для API
   const chatFilter = {
@@ -132,6 +133,7 @@ export function ChatPage({
     chat_type: chatTypeParam as 'direct' | 'group' | undefined,
     connector_type: connectorTypeParam || undefined,
     folder_id: folderIdParam ? Number(folderIdParam) : undefined,
+    scope: (scopeParam as 'mine' | 'all' | null) || undefined,
   };
 
   // Аргументы для getChats - исключаем undefined значения для корректного сравнения в RTK Query
@@ -142,6 +144,7 @@ export function ChatPage({
       chat_type?: string;
       connector_type?: string;
       folder_id?: number;
+      scope?: 'mine' | 'all';
     } = { limit: 100 };
     if (chatFilter.is_internal !== undefined)
       args.is_internal = chatFilter.is_internal;
@@ -151,12 +154,14 @@ export function ChatPage({
       args.connector_type = chatFilter.connector_type;
     if (chatFilter.folder_id !== undefined)
       args.folder_id = chatFilter.folder_id;
+    if (chatFilter.scope !== undefined) args.scope = chatFilter.scope;
     return args;
   }, [
     chatFilter.is_internal,
     chatFilter.chat_type,
     chatFilter.connector_type,
     chatFilter.folder_id,
+    chatFilter.scope,
   ]);
 
   const [markChatAsRead] = useMarkChatAsReadMutation();

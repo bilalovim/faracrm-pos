@@ -98,7 +98,15 @@ class SecurityAccessChecker(AccessChecker["Session"]):
         if not has_acl:
             return False, []
 
-        domain = await self._get_domains(role_ids, model, operation, user_id)
+        # Команды — из сессии (гидрируются при сборке, см. _set_team_ids), без
+        # запроса. Сюда доходим только для обычной сессии (admin/anonymous
+        # отсечены выше), поэтому team_ids уже проставлены. Доступ через точку
+        # безопасен: team_ids — реальное поле User (как role_ids ниже в
+        # check_field_access), у негидратированной сессии → None → `or []`.
+        session_team_ids = [t.id for t in (session.user_id.team_ids or [])]
+        domain = await self._get_domains(
+            role_ids, model, operation, user_id, team_ids=session_team_ids
+        )
         # 2. Проверка Rules (если есть record_ids)
         if record_ids:
             has_rules = await self._check_rules(model, record_ids, domain)
@@ -205,6 +213,16 @@ class SecurityAccessChecker(AccessChecker["Session"]):
         result = await db_session.execute(stmt, [user_id])
         return [row["role_id"] for row in result]
 
+    async def _get_user_team_ids(self, user_id: int) -> list[int]:
+        """ID команд пользователя (team_crm.user_ids M2M) — источник
+        {{team_ids}}. Прямой SQL (внутри checker нельзя звать ORM — рекурсия).
+        Join-таблица team_crm_user_many2many: column1=user_id, column2=team_id.
+        """
+        db_session = self.env.models.model._get_db_session()
+        stmt = "SELECT team_id FROM team_crm_user_many2many WHERE user_id = %s"
+        result = await db_session.execute(stmt, [user_id])
+        return [row["team_id"] for row in result]
+
     async def _check_acl(
         self,
         role_ids: list[int],
@@ -235,6 +253,7 @@ class SecurityAccessChecker(AccessChecker["Session"]):
         model: str,
         operation: Operation,
         user_id: int,
+        team_ids: list[int] | None = None,
     ) -> list:
         """Получает и объединяет domain-фильтры из Rules."""
         db_session = self.env.models.model._get_db_session()
@@ -254,6 +273,12 @@ class SecurityAccessChecker(AccessChecker["Session"]):
         if not result:
             return []
 
+        # Команды для {{team_ids}}: обычно приходят из сессии (гидрируются при
+        # сборке — без запроса на каждую проверку). Запрос — только fallback
+        # для вызовов без сессии (напр. @has_parent_access из rule_operators).
+        if team_ids is None:
+            team_ids = await self._get_user_team_ids(user_id)
+
         # Парсим и объединяем domains
         domains = []
         for row in result:
@@ -265,8 +290,10 @@ class SecurityAccessChecker(AccessChecker["Session"]):
                     if domain in [BYPASS_DOMAIN, BYPASS_DOMAIN_LEGACY]:
                         return []
                     if domain:
-                        # Подставляем переменные ({{user_id}})
-                        domain = self._substitute_variables(domain, user_id)
+                        # Подставляем переменные ({{user_id}}, {{team_ids}})
+                        domain = self._substitute_variables(
+                            domain, user_id, team_ids
+                        )
                         # Раскрываем кастомные операторы. Может вернуться:
                         # - SqlFragment (если rule был просто @-оператор)
                         # - список triplets/SqlFragment'ов
@@ -328,14 +355,25 @@ class SecurityAccessChecker(AccessChecker["Session"]):
     # Private: подстановка переменных
     # =========================================================================
 
-    def _substitute_variables(self, domain: Any, user_id: int) -> Any:
+    def _substitute_variables(
+        self, domain: Any, user_id: int, team_ids: list[int] | None = None
+    ) -> Any:
         """
         Рекурсивно подставляет переменные в domain.
 
         Поддерживаемые переменные:
-        - {{user_id}} или {{user.id}} — ID текущего пользователя
+        - {{user_id}} или {{user.id}} — ID текущего пользователя (скаляр)
+        - {{team_ids}} — список ID команд пользователя (team_crm.user_ids)
+
+        ВАЖНО про {{team_ids}}: это ЦЕЛОЗНАЧНАЯ подстановка (возвращаем list),
+        а не re.sub по подстроке — regex вернул бы строку, а нам нужен список
+        для `("team_id", "in", [..])`. Пустой список нельзя отдавать как []:
+        parser собрал бы `IN ()` — синтаксическая ошибка Postgres. Поэтому для
+        юзера без команд возвращаем [-1] (гарантированный no-match).
         """
         if isinstance(domain, str):
+            if re.fullmatch(r"\s*\{\{\s*team_ids\s*\}\}\s*", domain):
+                return list(team_ids) if team_ids else [-1]
             result = re.sub(
                 r"\{\{\s*user_id\s*\}\}|\{\{\s*user\.id\s*\}\}",
                 str(user_id),
@@ -347,12 +385,14 @@ class SecurityAccessChecker(AccessChecker["Session"]):
 
         elif isinstance(domain, list):
             return [
-                self._substitute_variables(item, user_id) for item in domain
+                self._substitute_variables(item, user_id, team_ids)
+                for item in domain
             ]
 
         elif isinstance(domain, tuple):
             return tuple(
-                self._substitute_variables(item, user_id) for item in domain
+                self._substitute_variables(item, user_id, team_ids)
+                for item in domain
             )
 
         return domain

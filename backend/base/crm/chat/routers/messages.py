@@ -65,8 +65,10 @@ async def get_messages(
     auth_session: "Session" = req.state.session
     user_id = auth_session.user_id.id
 
-    # Получаем member: если юзер админ без членства — стаб (БД не меняется)
-    current_member, _ = await ChatMember.get_or_stub_admin(
+    # Получаем member: член → его запись; админ → полный стаб; team-читатель
+    # (chat.team_id ∈ мои команды) → read-only стаб; иначе 403. Так «Все»
+    # реально открывается и читается не-членом команды (писать — вступив).
+    current_member, _ = await ChatMember.get_or_stub_reader(
         chat_id, user_id, auth_session.user_id.is_admin
     )
 
@@ -281,6 +283,103 @@ async def get_messages_count(
     return {"total": total, "unread": unread}
 
 
+@router_private.get("/partners/{partner_id}/chat")
+async def resolve_partner_chat(req: Request, partner_id: int):
+    """Найти внешний чат партнёра (модель 1:1) — БЕЗ создания (не плодим пустой
+    чат на открытие панели). Возвращает {chat_id|null}. Само содержимое чата
+    читается штатным GET /chats/{id}/messages (там и применяется доступ:
+    членство/team-правило).
+    """
+    env: "Environment" = req.app.state.env
+    chat = await env.models.chat.find_partner_group_chat(partner_id)
+    return {"chat_id": chat.id if chat else None, "partner_id": partner_id}
+
+
+@router_private.post("/partners/{partner_id}/chat")
+async def create_partner_chat(req: Request, partner_id: int):
+    """Создать (или вернуть существующий) ГРУППОВОЙ клиентский чат партнёра —
+    кнопка «Создать чат» в панели, когда чата ещё нет. Партнёр добавляется
+    участником внутри get_or_create_partner_chat; текущего пользователя
+    подписываем отдельно (чтобы он мог писать). connector=None → без команды/
+    руководителей (ручное создание из карточки)."""
+    env: "Environment" = req.app.state.env
+    auth_session: "Session" = req.state.session
+    user_id = auth_session.user_id.id
+
+    chat = await env.models.chat.get_or_create_partner_chat(partner_id)
+    await env.models.chat._ensure_membership(chat.id, user_id)
+    return {"chat_id": chat.id, "partner_id": partner_id}
+
+
+@router_private.get("/leads/{lead_id}/chat")
+async def resolve_lead_chat(req: Request, lead_id: int):
+    """Как resolve_partner_chat, но партнёр берётся из лида (lead.partner_id).
+    Доступ к лиду проверяют штатные правила leads (ORM search)."""
+    env: "Environment" = req.app.state.env
+    leads = await env.models.lead.search(
+        filter=[("id", "=", lead_id)],
+        fields=["id", "partner_id"],
+        limit=1,
+    )
+    if not leads or not leads[0].partner_id:
+        return {"chat_id": None, "partner_id": None}
+    partner_id = leads[0].partner_id.id
+    chat = await env.models.chat.find_partner_group_chat(partner_id)
+    return {
+        "chat_id": chat.id if chat else None,
+        "partner_id": partner_id,
+    }
+
+
+@router_private.get("/chats/{chat_id}/tags")
+async def get_chat_tags(
+    req: Request,
+    chat_id: int,
+    limit: int = Query(5, ge=1, le=20, description="Сколько последних тегов"),
+):
+    """Недавние теги чата — для селектора тега в панели ленты.
+
+    Собирает distinct лиды/задачи, засветившиеся в сообщениях чата,
+    отсортированные по времени (MAX(id) DESC — id монотонен, дешевле
+    create_datetime). Доступ гейтится через chat.get() (правила @is_member /
+    team-доступ применяются на ORM-пути; не видишь чат — RecordNotFound).
+    """
+    env: "Environment" = req.app.state.env
+
+    # Гейт доступа: если чат не виден пользователю — get() бросит/пусто.
+    await env.models.chat.get(chat_id, fields=["id"])
+
+    session = env.apps.db.get_session()
+    lead_rows = await session.execute(
+        """
+        SELECT lead_id, MAX(id) AS last
+        FROM chat_message
+        WHERE chat_id = %s AND lead_id IS NOT NULL AND is_deleted = false
+        GROUP BY lead_id
+        ORDER BY last DESC
+        LIMIT %s
+        """,
+        (chat_id, limit),
+    )
+    task_rows = await session.execute(
+        """
+        SELECT task_id, MAX(id) AS last
+        FROM chat_message
+        WHERE chat_id = %s AND task_id IS NOT NULL AND is_deleted = false
+        GROUP BY task_id
+        ORDER BY last DESC
+        LIMIT %s
+        """,
+        (chat_id, limit),
+    )
+    return {
+        "data": {
+            "lead_ids": [r["lead_id"] for r in lead_rows],
+            "task_ids": [r["task_id"] for r in task_rows],
+        }
+    }
+
+
 @router_private.post("/chats/{chat_id}/messages")
 async def post_message(req: Request, chat_id: int, body: MessageCreate):
     """
@@ -306,6 +405,8 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
             body=body.body,
             connector_id=body.connector_id,
             parent_id=body.parent_id,
+            lead_id=body.lead_id,
+            task_id=body.task_id,
         )
 
         # Создаём аттачменты и привязываем к сообщению.
@@ -446,6 +547,14 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
                     "body": message.body,
                     "message_type": message.message_type or "comment",
                     "connector_type": message.connector_type,
+                    # Тег «ленты»: фронт роутит событие в ленту лида по lead_id.
+                    # partner_id тут НЕ шлём (потребовал бы лишний запрос);
+                    # партнёр-лента живёт по членству и обновляется рефетчем/
+                    # оптимистично из своей же панели (см. ревью, «честный
+                    # real-time»). Во входящем пути partner_id есть даром — там
+                    # он в пейлоаде (strategies/strategy.py).
+                    "lead_id": body.lead_id,
+                    "task_id": body.task_id,
                     "author": {
                         "id": user_id,
                         "name": auth_session.user_id.name,

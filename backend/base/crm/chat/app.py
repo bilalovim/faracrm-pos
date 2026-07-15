@@ -36,7 +36,14 @@ class ChatApp(Service):
         "license": "FARA CRM License v1.0",
         "post_init": True,
         "service": True,
-        "depends": ["security", "users", "attachments", "db", "leads"],
+        "depends": [
+            "security",
+            "users",
+            "attachments",
+            "db",
+            "leads",
+            "tasks",
+        ],
         "sequence": 90,
     }
 
@@ -160,7 +167,7 @@ class ChatApp(Service):
         """
         from backend.base.crm.security.models.rules import Rule
 
-        # Хелпер для безопасного создания rule
+        # Хелпер для безопасного создания rule (role_id=None → для всех ролей).
         async def create_rule_if_missing(name, model_name, domain, perms):
             model_rec = await env.models.model.search(
                 filter=[("name", "=", model_name)],
@@ -201,6 +208,19 @@ class ChatApp(Service):
             perms={"read": True, "update": True},
         )
 
+        # Chat (team-scoped, ЧТЕНИЕ) — правила OR-комбинируются: чат виден также,
+        # если его team_id входит в команды пользователя ({{team_ids}}).
+        # Только read; писать/менять — по членству (правило выше). Внутренние
+        # чаты имеют team_id=NULL → в этот гейт не попадают. Кросс-командный
+        # обзор («все команды») пока покрывает is_admin — отдельная роль не
+        # заводится (YAGNI); ввести, если понадобится read-all-не-админ.
+        await create_rule_if_missing(
+            name="Chat: team members can read team chats",
+            model_name="chat",
+            domain=[["team_id", "in", "{{team_ids}}"]],
+            perms={"read": True},
+        )
+
         # ChatMember — chat_member.chat_id IN (SELECT chat_id FROM chat_member WHERE user_id=...)
         # Юзер видит участников только тех чатов где он сам участник
         await create_rule_if_missing(
@@ -210,17 +230,22 @@ class ChatApp(Service):
             perms={"read": True, "update": True},
         )
 
-        # ChatMessage — chat_message.chat_id IN (SELECT chat_id FROM chat_member WHERE user_id=...)
+        # ChatMessage ЧТЕНИЕ — через доступ к родительскому чату
+        # (@has_parent_access наследует OR-домены chat: члены + team + право),
+        # поэтому team-читатель видит сообщения, не будучи участником.
         await create_rule_if_missing(
-            name="ChatMessage: visible to members of the chat",
+            name="ChatMessage: readable if chat is accessible",
+            model_name="chat_message",
+            domain=[["@has_parent_access", "chat", "chat_id"]],
+            perms={"read": True},
+        )
+        # ChatMessage ЗАПИСЬ — только участники чата (team-читатель писать не
+        # может, пока не вступит).
+        await create_rule_if_missing(
+            name="ChatMessage: members can write",
             model_name="chat_message",
             domain=[["@is_member", "chat_id", "chat_member", "chat_id"]],
-            perms={
-                "read": True,
-                "create": True,
-                "update": True,
-                "delete": True,
-            },
+            perms={"create": True, "update": True, "delete": True},
         )
 
         # ChatMessageReaction — через has_parent_access на message

@@ -89,6 +89,85 @@ class LeadsApp(App):
         # Осталось создать row-level rules.
         await self._init_lead_rules(env)
 
+        # Дефолтная команда + авто-заполнение внутренними пользователями.
+        await self._init_default_team(env)
+
+    async def _init_default_team(self, env: "Environment"):
+        """Создать дефолтную команду и добавить в неё «внутренних
+        пользователей» (носителей роли base_user, с учётом наследования — её
+        имеют все внутренние роли). Идемпотентно: команда по имени, состав —
+        union с текущим (только добавляем, сессии участников инвалидируются
+        через team_crm.update → publish_roles_changed). Плюс backfill:
+        коннекторы без команды → дефолтная (чтобы новые внешние чаты попадали
+        в team-scoped видимость). Системный юзер исключён.
+        """
+        from backend.base.crm.leads.models.team_crm import TeamCrm
+        from backend.base.crm.users.models.users import SYSTEM_USER_ID
+
+        TEAM_NAME = "Команда по умолчанию"
+
+        existing = await env.models.team_crm.search(
+            filter=[("name", "=", TEAM_NAME)], fields=["id"], limit=1
+        )
+        team_id = (
+            existing[0].id
+            if existing
+            else await env.models.team_crm.create(
+                payload=TeamCrm(name=TEAM_NAME)
+            )
+        )
+
+        role = await env.models.role.search(
+            filter=[("code", "=", "base_user")], fields=["id"], limit=1
+        )
+        if not role:
+            return
+
+        db = env.models.team_crm._get_db_session()
+        # base_user наследуется всеми внутренними ролями → берём носителей всех
+        # ролей, которые его наследуют (обход role_based_many2many вверх).
+        rows = await db.execute(
+            """
+            WITH RECURSIVE inheritors AS (
+                SELECT $1::int AS role_id
+                UNION
+                SELECT rb.role_id FROM inheritors i
+                JOIN role_based_many2many rb
+                  ON rb.based_role_id = i.role_id
+            )
+            SELECT DISTINCT ur.user_id
+            FROM inheritors inh
+            JOIN user_role_many2many ur ON ur.role_id = inh.role_id
+            WHERE ur.user_id != $2
+            """,
+            [role[0].id, SYSTEM_USER_ID],
+            cursor="fetch",
+        )
+        member_ids = {r["user_id"] for r in rows}
+
+        cur = await db.execute(
+            "SELECT user_id FROM team_crm_user_many2many WHERE team_id = $1",
+            [team_id],
+            cursor="fetch",
+        )
+        current = {r["user_id"] for r in cur}
+        selected = sorted(current | member_ids)
+        if selected != sorted(current):
+            team = await env.models.team_crm.get(team_id)
+            await team.update(payload=TeamCrm(user_ids={"selected": selected}))
+
+        # Backfill: коннекторы без команды → дефолтная.
+        null_conns = await env.models.chat_connector.search(
+            filter=[("team_id", "=", None)], fields=["id"]
+        )
+        for c in null_conns:
+            conn = await env.models.chat_connector.get(c.id)
+            await conn.update(
+                payload=env.models.chat_connector(
+                    team_id=env.models.team_crm(id=team_id)
+                )
+            )
+
     async def _init_lead_rules(self, env: "Environment"):
         """
         Row-level security для лидов.

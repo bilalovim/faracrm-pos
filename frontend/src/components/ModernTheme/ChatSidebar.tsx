@@ -12,7 +12,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   IconMessage,
+  IconMessages,
   IconUsers,
+  IconUser,
   IconFolder,
   IconPlus,
   IconDotsVertical,
@@ -95,9 +97,15 @@ function builtinIcon(f: any): React.ReactNode {
     case 'group':
       return <IconUsers size={18} />;
     case 'all':
+      // «Все» (внутренние) — два бабла, чтобы отличалось от «Личные».
+      return <IconMessages size={18} />;
     case 'direct':
     case 'internal':
       return <IconMessage size={18} />;
+    case 'external_all':
+      return <IconUsers size={18} />;
+    case 'external_mine':
+      return <IconUser size={18} />;
     default:
       return <IconFolder size={18} />;
   }
@@ -157,8 +165,16 @@ export function ChatSidebar() {
     [data],
   );
 
-  // Разделяем на обычные и коннекторные (как раньше внутренние / внешние).
-  const regularFolders = allFolders.filter(f => !connectorId(f));
+  // Три секции: внутренние (Все/Личные/Группы + пользовательские), внешние
+  // (быстрые папки external_all/external_mine), каналы (папки коннекторов).
+  const EXTERNAL_KINDS = new Set(['external_all', 'external_mine']);
+  const nonConnectorFolders = allFolders.filter(f => !connectorId(f));
+  const externalFolders = nonConnectorFolders.filter(f =>
+    EXTERNAL_KINDS.has(f?.kind),
+  );
+  const regularFolders = nonConnectorFolders.filter(
+    f => !EXTERNAL_KINDS.has(f?.kind),
+  );
   // Папку коннектора показываем только если сам коннектор АКТИВЕН и это не
   // notification-канал (web_push — уведомления, а не чат). Иначе в сайдбаре
   // висели папки выключенных и уведомительных коннекторов. Коннектор, которого
@@ -245,7 +261,7 @@ export function ChatSidebar() {
       {/* Обычные папки */}
       <Group justify="space-between" px="sm" py="xs">
         <Text size="xs" fw={600} c="dimmed" tt="uppercase">
-          {t('chat:menu.folders', 'Папки')}
+          {t('chat:menu.internal', 'Внутренние')}
         </Text>
         <ActionIcon
           variant="subtle"
@@ -258,10 +274,19 @@ export function ChatSidebar() {
 
       {regularFolders.map(f => renderFolder(f, builtinIcon(f), f.name))}
 
-      {/* Коннекторы — отдельная секция «Внешние» */}
-      {connectorFolders.length > 0 && (
+      {/* Внешние — обычные глобальные папки external_all/external_mine
+          (навигация по folder_id; get_chats резолвит по kind). */}
+      {externalFolders.length > 0 && (
         <Text size="xs" fw={600} c="dimmed" px="sm" py="xs" tt="uppercase">
           {t('chat:menu.external', 'Внешние')}
+        </Text>
+      )}
+      {externalFolders.map(f => renderFolder(f, builtinIcon(f), f.name))}
+
+      {/* Каналы (коннекторные папки) — отдельной секцией НИЖЕ */}
+      {connectorFolders.length > 0 && (
+        <Text size="xs" fw={600} c="dimmed" px="sm" py="xs" tt="uppercase">
+          {t('chat:menu.channels', 'Каналы')}
         </Text>
       )}
 

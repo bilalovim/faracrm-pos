@@ -25,6 +25,8 @@ from backend.base.crm.users.audit_mixin import AuditMixin
 if TYPE_CHECKING:
     from backend.base.crm.users.models.users import User
     from backend.base.crm.partners.models.partners import Partner
+    from backend.base.crm.leads.models.leads import Lead
+    from backend.base.crm.tasks.models.task import Task
     from backend.base.crm.chat.models.chat import Chat
     from backend.base.crm.chat.models.chat_connector import ChatConnector
     from backend.base.crm.chat.models.chat_external_message import (
@@ -61,7 +63,16 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
     # Покрывает: /chats/.../messages/unread-count, /chats/.../messages/mark-read,
     # search_count, watermark-запрос unread. id в конце даёт index-only scan
     # для ORDER BY id DESC LIMIT 1 (последнее сообщение).
-    __indexes__ = [("chat_id", "is_deleted", "id")]
+    #
+    # Второй индекс — под «ленту» лида: выборка сообщений по lead_id с
+    # is_deleted=false и сортировкой по id DESC (keyset-пагинация). Партнёр-
+    # лента ходит через chat_member(partner_id) (см. индекс там), поэтому
+    # message.partner_id НЕ денормализуем.
+    __indexes__ = [
+        ("chat_id", "is_deleted", "id"),
+        ("lead_id", "is_deleted", "id"),
+        ("task_id", "is_deleted", "id"),
+    ]
 
     id: int = Integer(primary_key=True)
 
@@ -157,6 +168,30 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
         description="Родительское сообщение (для ответов)",
     )
 
+    # Лид, к которому относится сообщение — тег для «ленты».
+    # Ставится синхронно при создании: входящее — лид из лидогенерации;
+    # исходящее из лид-панели — сам лид. NULL = сообщение вне лида (видно
+    # только в партнёр-скоупе ленты). ondelete='set null' — удаление лида не
+    # рушит историю переписки, тег просто обнуляется (при merge/reassign
+    # лид перетегируется, см. Lead). Партнёр НЕ денормализуем на сообщение —
+    # он выводится из chat_member (единственный тег здесь — lead_id).
+    lead_id: "Lead | None" = Many2one(
+        index=True,
+        ondelete="set null",
+        relation_table=lambda: env.models.lead,
+        description="Лид, к которому относится сообщение (тег ленты)",
+    )
+
+    # Второй тег «ленты» — задача. Параллельно lead_id: сообщение можно
+    # привязать к лиду И/ИЛИ к задаче. Список тегов чата собирает ручка
+    # GET /chats/{id}/tags (GROUP BY по обоим FK).
+    task_id: "Task | None" = Many2one(
+        index=True,
+        ondelete="set null",
+        relation_table=lambda: env.models.task,
+        description="Задача, к которой относится сообщение (тег ленты)",
+    )
+
     # Звёздочка/избранное
     starred: bool = Boolean(default=False, description="Отмечено как важное")
 
@@ -198,6 +233,8 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
         message_type: str = "comment",
         connector_id: int | None = None,
         parent_id: int | None = None,
+        lead_id: int | None = None,
+        task_id: int | None = None,
         # attachment_ids: list[int] | None = None,
         # res_model: str | None = None,
         # res_id: int | None = None,
@@ -247,6 +284,14 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
         if parent_id:
             parent = env.models.chat_message(id=parent_id)
 
+        lead = None
+        if lead_id:
+            lead = env.models.lead(id=lead_id)
+
+        task = None
+        if task_id:
+            task = env.models.task(id=task_id)
+
         now = datetime.now(timezone.utc)
         message = ChatMessage(
             body=body,
@@ -257,6 +302,8 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
             connector_id=connector,
             connector_type=connector_type,
             parent_id=parent,
+            lead_id=lead,
+            task_id=task,
             create_datetime=now,
             update_datetime=now,
             # res_model=res_model,
@@ -324,6 +371,8 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
                 "parent_id",
                 "connector_id",
                 "connector_type",
+                "lead_id",
+                "task_id",
                 "call_direction",
                 "call_disposition",
                 "call_duration",

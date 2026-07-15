@@ -9,13 +9,23 @@ import {
   Tabs,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
-import { IconBell, IconMessage, IconPaperclip } from '@tabler/icons-react';
+import {
+  IconBell,
+  IconNotes,
+  IconPaperclip,
+  IconMessageCircle,
+} from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 import { useSearchQuery } from '@/services/api/crudApi';
 import { useGetRecordMessagesCountQuery } from '@/services/api/chat';
 import { ActivityPanel } from './ActivityPanel';
 import { MessagesPanel } from './MessagesPanel';
 import { AttachmentsPanel } from './AttachmentsPanel';
+import { PartnerChatPanel } from './PartnerChatPanel';
+
+// «Чат» (переписка с клиентом) доступен только там, где есть партнёр:
+// на форме лида (по lead.partner_id) и партнёра (по partner_id).
+const FEED_MODELS = new Set(['leads', 'partners']);
 
 const COUNT_LIMIT = 80;
 const PANEL_MIN_WIDTH = 300;
@@ -28,7 +38,12 @@ interface FormPanelsProps {
   resId: number;
 }
 
-export type PanelType = 'activities' | 'messages' | 'attachments' | null;
+export type PanelType =
+  | 'activities'
+  | 'messages'
+  | 'attachments'
+  | 'feed'
+  | null;
 
 /**
  * Badge icons for toolbar.
@@ -94,11 +109,16 @@ export function FormPanelsBadges({
   const iconColor = (count: number, active: string) =>
     activePanel === active ? undefined : count > 0 ? 'blue' : 'gray';
 
+  // messages-панель = record-чат внутренних заметок команды → «Заметки».
+  // Клиентская переписка вынесена в отдельную панель «Лента» (feed).
   const panelTitle: Record<string, string> = {
     activities: t('activity:menu.activity', 'Активности'),
-    messages: t('common:messages', 'Сообщения'),
+    messages: t('common:notes', 'Заметки'),
     attachments: t('common:attachments', 'Вложения'),
+    feed: t('common:client_chat', 'Чат'),
   };
+
+  const feedEnabled = FEED_MODELS.has(resModel);
 
   return (
     <Group gap={4}>
@@ -130,9 +150,22 @@ export function FormPanelsBadges({
           size="md"
           onClick={() => onToggle('messages')}
           title={panelTitle.messages}>
-          <IconMessage size={18} />
+          <IconNotes size={18} />
         </ActionIcon>
       </Indicator>
+
+      {/* Лента — клиентская переписка (только лид/партнёр). Счётчик не
+          показываем (v1): unread ленты считается отдельно, бейдж без числа. */}
+      {feedEnabled && (
+        <ActionIcon
+          variant={activePanel === 'feed' ? 'filled' : 'subtle'}
+          color={activePanel === 'feed' ? undefined : 'gray'}
+          size="md"
+          onClick={() => onToggle('feed')}
+          title={panelTitle.feed}>
+          <IconMessageCircle size={18} />
+        </ActionIcon>
+      )}
 
       <Indicator
         label={formatCount(attachmentCount)}
@@ -226,9 +259,14 @@ export function FormPanelSide({
 
   const panelTitles: Record<string, string> = {
     activities: t('activity:menu.activity', 'Активности'),
-    messages: t('common:messages', 'Сообщения'),
+    messages: t('common:notes', 'Заметки'),
     attachments: t('common:attachments', 'Вложения'),
+    feed: t('common:client_chat', 'Чат'),
   };
+
+  // Панели с собственным скроллом (чат-подобные) рендерятся без падинга и
+  // без внешнего overflow — они управляют прокруткой сами.
+  const selfScroll = activePanel === 'messages' || activePanel === 'feed';
 
   // На mobile панель рендерится внутри Drawer — не нужны фиксированные размеры и resize
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 576;
@@ -301,10 +339,10 @@ export function FormPanelSide({
 
         {/* Panel body */}
         <Box
-          p={activePanel === 'messages' ? 0 : 'sm'}
+          p={selfScroll ? 0 : 'sm'}
           style={{
             flex: 1,
-            overflowY: activePanel === 'messages' ? 'hidden' : 'auto',
+            overflowY: selfScroll ? 'hidden' : 'auto',
             overflowX: 'hidden',
             display: 'flex',
             flexDirection: 'column',
@@ -315,6 +353,9 @@ export function FormPanelSide({
           )}
           {activePanel === 'messages' && (
             <MessagesPanel resModel={resModel} resId={resId} />
+          )}
+          {activePanel === 'feed' && (
+            <PartnerChatPanel resModel={resModel} resId={resId} />
           )}
           {activePanel === 'attachments' && (
             <AttachmentsPanel resModel={resModel} resId={resId} />

@@ -60,6 +60,25 @@ DEFAULT_GLOBAL_FOLDERS = [
         "domain": [["chat_type", "in", ["group", "channel"]]],
         "sequence": 20,
     },
+    # Внешние (клиентские) чаты. Резолвятся get_chats по kind, НЕ доменом:
+    # членство ("Мои") и team-видимость ("Все") не выразить доменом над chat.
+    #   - external_all:  is_internal=false + (участник ИЛИ chat.team_id ∈ мои
+    #                    команды) — team-scoped обзор;
+    #   - external_mine: is_internal=false + только где я участник.
+    {
+        "kind": "external_all",
+        "name": "Все",
+        "icon": "external_all",
+        "domain": None,
+        "sequence": 30,
+    },
+    {
+        "kind": "external_mine",
+        "name": "Мои",
+        "icon": "external_mine",
+        "domain": None,
+        "sequence": 40,
+    },
 ]
 
 

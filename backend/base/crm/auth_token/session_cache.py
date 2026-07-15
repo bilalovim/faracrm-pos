@@ -35,6 +35,11 @@ class CachedSession:
     # сборке сессии, чтобы field-level проверка не ходила в БД на каждый
     # write. Сбрасываются через invalidate_user при смене ролей.
     role_codes: tuple[str, ...] = ()
+    # ID команд пользователя (team_crm.user_ids) — кладутся при сборке сессии,
+    # чтобы доступ по командам ({{team_ids}}) не ходил в БД на каждую проверку.
+    # Инвалидация — тем же invalidate_user (publish_roles_changed при смене
+    # состава команды: команды = authz-атрибут).
+    team_ids: tuple[int, ...] = ()
 
 
 class SessionCache:

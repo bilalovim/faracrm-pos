@@ -109,6 +109,7 @@ interface ChatFilter {
   chat_type?: 'direct' | 'group';
   connector_type?: string;
   folder_id?: number;
+  scope?: 'mine' | 'all';
 }
 
 interface ChatListProps {
@@ -185,6 +186,7 @@ export function ChatList({
       chat_type?: string;
       connector_type?: string;
       folder_id?: number;
+      scope?: 'mine' | 'all';
       include_deleted?: boolean;
       include_record?: boolean;
       include_foreign?: boolean;
@@ -194,6 +196,7 @@ export function ChatList({
     if (filter.connector_type !== undefined)
       args.connector_type = filter.connector_type;
     if (filter.folder_id !== undefined) args.folder_id = filter.folder_id;
+    if (filter.scope !== undefined) args.scope = filter.scope;
     if (showDeletedChats) args.include_deleted = true;
     if (showRecordChats) args.include_record = true;
     if (showForeignChats) args.include_foreign = true;
@@ -203,6 +206,7 @@ export function ChatList({
     filter.chat_type,
     filter.connector_type,
     filter.folder_id,
+    filter.scope,
     showDeletedChats,
     showRecordChats,
     showForeignChats,

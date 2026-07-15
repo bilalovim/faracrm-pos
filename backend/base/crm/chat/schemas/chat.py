@@ -157,6 +157,15 @@ class MessageCreate(BaseModel):
     parent_id: int | None = Field(
         None, description="Parent message ID for replies"
     )
+    # Тег «ленты»: к какому лиду относится это (исходящее) сообщение. Передаёт
+    # вызывающий — обычно панель ленты в форме лида. NULL = вне лида (партнёр-
+    # скоуп). Проставляется в message.lead_id через post_message.
+    lead_id: int | None = Field(
+        None, description="Lead the message belongs to (feed tag)"
+    )
+    task_id: int | None = Field(
+        None, description="Task the message belongs to (feed tag)"
+    )
     attachments: list[AttachmentInput] = Field(
         default_factory=list, description="Attachments to upload"
     )

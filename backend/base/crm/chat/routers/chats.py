@@ -95,6 +95,11 @@ async def get_chats(
         description="Admin-only: показать чужие чаты "
         "(где текущий user не активный мембер)",
     ),
+    scope: str | None = Query(
+        None,
+        description="Внешние чаты: 'mine'=где я участник (дефолт), "
+        "'all'=мои команды + членство (team-scoped видимость)",
+    ),
 ):
     """
     Получить список чатов текущего пользователя.
@@ -120,6 +125,8 @@ async def get_chats(
     auth_session: "Session" = req.state.session
     user_id = auth_session.user_id.id
     is_sys_admin = bool(auth_session.user_id.is_admin)
+    # Команды пользователя — уже в сессии (гидрируются при сборке), без запроса.
+    my_team_ids = [t.id for t in (auth_session.user_id.team_ids or [])]
 
     # include_foreign разрешён только системному админу. Не-админам
     # бросаем 403, чтобы ошибка не маскировалась под «пустой результат».
@@ -132,24 +139,59 @@ async def get_chats(
 
     _show_foreign = bool(include_foreign) and is_sys_admin
 
-    # Строим SQL динамически.
-    # По умолчанию JOIN по членству. При include_foreign JOIN убираем —
-    # админ видит все чаты (в т.ч. те, где он не мембер).
+    # Папку грузим РАНО: её kind влияет на базовый JOIN. Внешние папки
+    # external_mine/external_all — глобальные, резолвятся по kind (не доменом,
+    # как папки коннекторов): членство/team не выразить доменом над chat.
+    # external_all = team-видимость (LEFT JOIN, членство необязательно).
+    folder_row = None
+    if folder_id is not None:
+        _frows = await env.models.chat_folder.search(
+            filter=[("id", "=", folder_id)],
+            fields=["id", "domain", "connector_id", "kind"],
+            limit=1,
+        )
+        if not _frows:
+            return {"data": [], "total": 0}
+        folder_row = _frows[0]
+    folder_kind = folder_row.kind if folder_row else None
+
+    # «Все» (внешние, team-scoped): из scope=all ИЛИ папки external_all.
+    want_all = (scope == "all") or (folder_kind == "external_all")
+
+    # Строим SQL динамически. Плейсхолдеры FROM/JOIN (join_params) держим
+    # ОТДЕЛЬНО от WHERE (where_params): в итоговом тексте все JOIN-%s идут
+    # раньше WHERE-%s, поэтому итоговый порядок = join_params + where_params.
+    # Это убирает хрупкий insert(0) и делает scope/connector_type безопасными.
+    join_params: list = []
+    conditions: list[str] = []
+    where_params: list = []
+
     if _show_foreign:
         base_query = """
             SELECT DISTINCT c.id, c.last_message_date
             FROM chat c
         """
-        conditions: list[str] = []
-        params: list = []
     else:
+        # LEFT JOIN + cm.user_id в ON: членство больше не обязательно, чтобы
+        # scope=all мог показать team-scoped внешние чаты, где юзер НЕ участник.
         base_query = """
             SELECT DISTINCT c.id, c.last_message_date, cm.is_pinned
             FROM chat c
-            JOIN chat_member cm ON c.id = cm.chat_id AND cm.is_active = true
+            LEFT JOIN chat_member cm
+                ON c.id = cm.chat_id
+               AND cm.is_active = true
+               AND cm.user_id = %s
         """
-        conditions = ["cm.user_id = %s"]
-        params = [user_id]
+        join_params.append(user_id)
+        if want_all and my_team_ids:
+            # Мои чаты (участник) ИЛИ чаты моих команд (team-scoped видимость).
+            conditions.append(
+                "(cm.user_id IS NOT NULL OR c.team_id = ANY(%s))"
+            )
+            where_params.append(my_team_ids)
+        else:
+            # 'mine' (дефолт) — только где я активный участник.
+            conditions.append("cm.user_id IS NOT NULL")
 
     # Soft-delete: фильтр по active снимается флагом (доступно всем)
     if not bool(include_deleted):
@@ -171,7 +213,7 @@ async def get_chats(
             conditions.append("c.chat_type IN ('group', 'channel')")
         else:
             conditions.append("c.chat_type = %s")
-            params.append(chat_type)
+            where_params.append(chat_type)
 
     # Фильтр connector_type — через контакты партнёров-участников чата.
     # Логика: connector.contact_type_id → contact.contact_type_id → partner → chat_member.
@@ -192,38 +234,31 @@ async def get_chats(
                 AND contact_filter.active = true
                 AND contact_filter.contact_type_id = %s
             """
-            params.insert(0, contact_type_id_for_filter.id)
+            # JOIN-плейсхолдер (текстово после cm-LEFT-JOIN) → в join_params.
+            join_params.append(contact_type_id_for_filter.id)
 
-    # Фильтр по папке. Папка хранит domain (JSON) над chat. Правила доступа
-    # chat_folder уже ограничивают выборку своими + глобальными папками, так
-    # что чужую папку сюда не передать. Папка коннектора (connector_id задан)
-    # резолвится по chat_external_chat — набор коннектора не выразить обычным
-    # domain над chat. Остальные — штатным ORM-поиском по domain.
-    if folder_id is not None:
-        folder_rows = await env.models.chat_folder.search(
-            filter=[("id", "=", folder_id)],
-            fields=["id", "domain", "connector_id"],
-            limit=1,
-        )
-        if not folder_rows:
-            return {"data": [], "total": 0}
-        folder = folder_rows[0]
-
-        # Many2one может вернуться как запись ({id,...}) или как голый id.
-        conn = folder.connector_id
-        if conn:
+    # Резолвинг папки (folder_row загружен рано). Три ветки:
+    #   - external_mine/external_all → по kind: только внешние чаты
+    #     (team-vs-membership уже задан базовым условием want_all выше);
+    #   - папка коннектора → по chat_external_chat (не domain);
+    #   - остальные → штатным ORM-поиском по domain (правила chat_folder уже
+    #     ограничили выборку своими+глобальными папками).
+    if folder_row is not None:
+        if folder_kind in ("external_mine", "external_all"):
+            conditions.append("c.is_internal = false")
+        elif folder_row.connector_id:
             ext_rows = await session.execute(
                 "SELECT DISTINCT chat_id FROM chat_external_chat "
                 "WHERE connector_id = %s",
-                (conn.id,),
+                (folder_row.connector_id.id,),
             )
             ext_ids = [r["chat_id"] for r in ext_rows]
             if not ext_ids:
                 return {"data": [], "total": 0}
             conditions.append("c.id = ANY(%s)")
-            params.append(ext_ids)
+            where_params.append(ext_ids)
         else:
-            domain = folder.domain or []
+            domain = folder_row.domain or []
             if domain:
                 matched = await env.models.chat.search(
                     filter=domain, fields=["id"], limit=10000
@@ -232,15 +267,22 @@ async def get_chats(
                 if not matched_ids:
                     return {"data": [], "total": 0}
                 conditions.append("c.id = ANY(%s)")
-                params.append(matched_ids)
+                where_params.append(matched_ids)
 
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
 
     # Закреплённые чаты сверху. В foreign-режиме нет cm-джойна → без закрепа.
+    # LEFT JOIN даёт cm.is_pinned=NULL у team-чатов, где юзер НЕ участник.
+    # NULLS LAST кладёт их вниз (по умолчанию DESC = NULLS FIRST). Сортируем
+    # именно по cm.is_pinned (а не COALESCE) — оно в списке SELECT DISTINCT,
+    # иначе Postgres: "ORDER BY expressions must appear in select list".
     if _show_foreign:
         order_by = "c.last_message_date DESC NULLS LAST"
     else:
-        order_by = "cm.is_pinned DESC, c.last_message_date DESC NULLS LAST"
+        order_by = (
+            "cm.is_pinned DESC NULLS LAST, "
+            "c.last_message_date DESC NULLS LAST"
+        )
 
     chat_ids_query = f"""
         {base_query}
@@ -248,7 +290,8 @@ async def get_chats(
         ORDER BY {order_by}
         LIMIT %s OFFSET %s
     """
-    all_params = params + [limit, offset]
+    # Порядок: сначала все JOIN/FROM-плейсхолдеры, затем WHERE, затем LIMIT/OFFSET.
+    all_params = join_params + where_params + [limit, offset]
 
     chat_id_rows = await session.execute(chat_ids_query, tuple(all_params))
 

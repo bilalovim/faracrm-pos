@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from backend.base.system.core.enviroment import Environment
     from backend.base.crm.security.models.roles import Role
     from backend.base.crm.languages.models.language import Language
+    from backend.base.crm.leads.models.team_crm import TeamCrm
     from backend.base.crm.partners.models.contact import Contact
     from backend.base.crm.security.routers.sessions import TerminationMode
 from backend.base.crm.security.models.sessions import Session
@@ -113,6 +114,19 @@ class User(PolymorphicParentMixin):
         column1="role_id",
         column2="user_id",
         ondelete="cascade",
+    )
+    # Команды пользователя (обратная сторона team_crm.user_ids — та же
+    # join-таблица). Кладутся в сессию при сборке (как role_ids) для
+    # {{team_ids}} — доступ к внешним чатам по командам без запроса на
+    # каждую проверку. Инвалидация — publish_roles_changed при смене состава.
+    team_ids: list["TeamCrm"] = Many2many(
+        store=False,
+        relation_table=lambda: env.models.team_crm,
+        many2many_table="team_crm_user_many2many",
+        column1="team_id",
+        column2="user_id",
+        ondelete="cascade",
+        default=[],
     )
     # Язык интерфейса пользователя (Many2one на Language)
     lang_id: "Language" = Many2one(
@@ -388,6 +402,18 @@ class User(PolymorphicParentMixin):
         session = cls._get_db_session()
         result = await session.execute(query, [user_id], cursor="fetch")
         return {row["code"] for row in result if row.get("code")}
+
+    @classmethod
+    async def get_all_team_ids(cls, user_id: int) -> list[int]:
+        """ID команд пользователя (team_crm.user_ids). Кладутся в сессию при
+        сборке для {{team_ids}} — без запроса на каждую проверку доступа.
+        Прямой запрос по join-таблице (не рекурсивный)."""
+        query = (
+            "SELECT team_id FROM team_crm_user_many2many WHERE user_id = $1"
+        )
+        session = cls._get_db_session()
+        result = await session.execute(query, [user_id], cursor="fetch")
+        return [row["team_id"] for row in result if row.get("team_id")]
 
     def generate_password_hash_salt_old(self, password: str):
         return self.generate_password_hash(password, self.password_salt)

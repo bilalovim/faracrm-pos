@@ -2,13 +2,12 @@
 # Chat module - base strategy pattern
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Tuple
 import json
 import logging
 import mimetypes
 
-from backend.base.crm.users.models.users import User, SYSTEM_USER_ID
+from backend.base.crm.users.models.users import SYSTEM_USER_ID
 from backend.base.system.core.enviroment import env
 
 if TYPE_CHECKING:
@@ -300,39 +299,71 @@ class ChatStrategyBase(ABC):
             raise ValueError("Partner not found for contact")
         partner_name = contact.partner_id.name
 
-        # 2. Найти или создать связь с внешним чатом.
-        # Резолвим по external_id ЛИБО external_address (номер): при write-first
-        # связь могла быть создана по номеру, а ответ прийти по chat_id (или
-        # наоборот) — find_by_id_or_address покрывает оба случая.
+        # 2. Модель 1:1 — у партнёра ОДИН внешний групповой чат. Находим-или-
+        # создаём его ПО ПАРТНЁРУ (а не по внешнему треду). advisory-lock и
+        # штамп team_id/manager_ids — внутри get_or_create_partner_chat.
+        chat = await env.models.chat.get_or_create_partner_chat(
+            contact.partner_id.id,
+            connector=connector,
+            partner_name=partner_name,
+        )
+        chat_id = chat.id
+
+        # Внешний тред линкуем на этот же чат (many→one: несколько тредов/
+        # каналов одного партнёра → один чат). Резолвим по external_id ЛИБО
+        # address (write-first мог создать связь по номеру).
         external_chat = (
             await env.models.chat_external_chat.find_by_id_or_address(
                 key=adapter.chat_id,
                 connector_id=connector.id,
             )
         )
-
-        if external_chat and external_chat.chat_id:
-            # Используем существующий внутренний чат
-            chat_id = external_chat.chat_id.id
-        else:
-            # Создаём новый внутренний чат и внешний чат
-            chat_id = await self._create_new_chat(
-                env,
-                connector,
-                adapter,
-                external_account,
-                partner_name=partner_name,
+        if not external_chat:
+            item_title, item_url = await self._fetch_item_info(
+                connector, adapter
             )
-            if chat_id is None:
-                return
-            # Перечитываем external_chat после создания, чтобы получить
-            # обновлённые поля item_title/item_url для лидогенерации.
+            await env.models.chat_external_chat.create_link(
+                external_id=adapter.chat_id,
+                connector_id=connector.id,
+                chat_id=chat_id,
+                item_title=item_title,
+                item_url=item_url,
+            )
             external_chat = (
                 await env.models.chat_external_chat.find_by_external_id(
                     external_id=adapter.chat_id,
                     connector_id=connector.id,
                 )
             )
+
+        # Лидогенерация — ДО создания сообщения, чтобы сразу проставить
+        # message.lead_id (тег «ленты» лида). Лид резолвится по клиенту-
+        # контрагенту чата; при исходящем автор — оператор, но лид всё равно
+        # на клиента (contact.partner_id). Раньше этот блок стоял ПОСЛЕ
+        # post_message (сообщение, породившее лид, тегировалось NULL) — теперь
+        # синхронно. Сбой лидогенерации не валит обработку: lead_id=None,
+        # сообщение остаётся видно в партнёр-скоупе ленты.
+        lead_id = None
+        if connector.lead_generation:
+            try:
+                if contact.partner_id:
+                    lead = await self._get_or_create_lead(
+                        env=env,
+                        connector=connector,
+                        adapter=adapter,
+                        contact=contact,
+                        external_chat=external_chat,
+                    )
+                    if lead is not None:
+                        lead_id = lead.id
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[%s] Lead generation failed for message %s: %s",
+                    self.strategy_type,
+                    adapter.message_id,
+                    exc,
+                    exc_info=True,
+                )
 
         # 3. Определяем автора сообщения.
         # contact — это контакт КЛИЕНТА-контрагента.
@@ -365,6 +396,7 @@ class ChatStrategyBase(ABC):
             author_partner_id=author_partner_id,
             body=adapter.serialized_body,
             connector_id=connector.id,
+            lead_id=lead_id,
         )
 
         # 5. Создаём связь с внешним сообщением
@@ -378,32 +410,13 @@ class ChatStrategyBase(ABC):
         # 6. Обрабатываем изображения
         await self._process_attachments(connector, adapter, message)
 
-        # 7. Лидогенерация — по клиенту-контрагенту чата.
-        # Раньше условием было `author_partner_id`, но при исходящем
-        # сообщении автор — оператор, а лид всё равно нужен на клиента
-        # (contact.partner_id). Для входящих поведение не меняется: там
-        # contact — это и есть автор-клиент.
-        if connector.lead_generation:
-            try:
-                if contact.partner_id:
-                    await self._get_or_create_lead(
-                        env=env,
-                        connector=connector,
-                        adapter=adapter,
-                        contact=contact,
-                        external_chat=external_chat,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                # Лидогенерация не должна валить обработку сообщения целиком.
-                logger.warning(
-                    "[%s] Lead generation failed for message %s: %s",
-                    self.strategy_type,
-                    adapter.message_id,
-                    exc,
-                    exc_info=True,
-                )
+        # 7. Лидогенерация выполнена ВЫШЕ (до post_message), чтобы message.lead_id
+        # проставился синхронно. Здесь ничего не делаем.
 
-        # 8. Отправляем уведомление через WebSocket
+        # 8. Отправляем уведомление через WebSocket.
+        # partner_id/lead_id едут в пейлоаде — по ним фронт роутит событие в
+        # «ленты» партнёра/лида (помимо кэша чата). partner_id тут известен
+        # даром (contact.partner_id), поэтому кладём оба тега.
         author_data = {
             "id": author_user_id or author_partner_id,
             "name": partner_name or adapter.author_name,
@@ -421,6 +434,10 @@ class ChatStrategyBase(ABC):
                     "author": author_data,
                     "author_user_id": author_user_id,
                     "author_partner_id": author_partner_id,
+                    "partner_id": (
+                        contact.partner_id.id if contact.partner_id else None
+                    ),
+                    "lead_id": lead_id,
                     "create_datetime": (
                         message.create_datetime.isoformat()
                         if message.create_datetime
@@ -438,112 +455,6 @@ class ChatStrategyBase(ABC):
             adapter.message_id,
             message.id,
         )
-
-    async def _create_new_chat(
-        self,
-        env: "Environment",
-        connector: "ChatConnector",
-        adapter: "ChatMessageAdapter",
-        external_account: "ChatExternalAccount",
-        partner_name: str | None = None,
-    ) -> int | None:
-        """Создать новый чат для входящего сообщения.
-
-        ``partner_name`` — каноническое имя партнёра (как лежит в БД после
-        ``find_or_create_for_webhook``). Используется как основа для
-        ``chat.name``. Если не передано — фолбэк на ``adapter.author_name`` /
-        ``adapter.author_id`` (обратная совместимость).
-        """
-        # Pull-модель: чат создаётся БЕЗ закреплённого оператора, создатель —
-        # системный пользователь. Подписываем руководителей коннектора
-        # (manager_ids) — они видят все чаты. Конкретный ответственный
-        # подпишется, когда возьмёт лид (см. Lead.update).
-        # manager_ids — M2M (store=False), поэтому подгружаем коннектор с этим
-        # полем и читаем через точку.
-        conns = await env.models.chat_connector.search(
-            filter=[("id", "=", connector.id)],
-            fields=["id", "manager_ids"],
-            limit=1,
-        )
-        managers = conns[0].manager_ids if conns else []
-
-        # Создаём чат.
-        # chat_type="group" — участников может быть >2 (партнёр + руководители
-        # + ответственный). is_internal=False т.к. это внешний чат.
-        author_label = partner_name or adapter.author_name or adapter.author_id
-        chat_name = f"{author_label} ({connector.name})"
-
-        now = datetime.now(timezone.utc)
-        chat = env.models.chat(
-            name=chat_name,
-            chat_type="group",
-            is_internal=False,  # Внешний чат
-            create_user_id=User(id=SYSTEM_USER_ID),
-            create_datetime=now,
-            update_datetime=now,
-        )
-        # create() возвращает id — присваиваем его тому же объекту, лишний
-        # get() не нужен: chat_member.chat_id это FK, ему достаточно id.
-        chat_id = await env.models.chat.create(payload=chat)
-        chat.id = chat_id
-
-        # TODO: bulk create
-        # Подписываем руководителей коннектора как участников.
-        for manager in managers or []:
-            manager_member = env.models.chat_member(
-                chat_id=chat,
-                user_id=manager,
-            )
-            await env.models.chat_member.create(payload=manager_member)
-
-        # Добавляем клиента (партнёра) как участника (через contact)
-        if (
-            external_account.contact_id
-            and external_account.contact_id.partner_id
-        ):
-            partner_member = env.models.chat_member(
-                chat_id=chat,
-                partner_id=external_account.contact_id.partner_id,
-            )
-            await env.models.chat_member.create(payload=partner_member)
-
-        # Сразу получаем item_title/item_url у стратегии, чтобы записать
-        # их в cache на chat_external_chat (использует и лидогенерация,
-        # и UI). Безопасно: если стратегия не умеет — вернёт пустые.
-        item_title, item_url = await self._fetch_item_info(connector, adapter)
-
-        # Создаём связь с внешним чатом и сам внешний чат
-        await env.models.chat_external_chat.create_link(
-            external_id=adapter.chat_id,
-            connector_id=connector.id,
-            chat_id=chat_id,
-            item_title=item_title,
-            item_url=item_url,
-        )
-
-        try:
-            cm = env.apps.chat.chat_manager
-            for manager in managers or []:
-                if manager.id:
-                    await cm.notify_new_chat(manager.id, chat_id)
-        except Exception as exc:  # noqa: BLE001
-            # Подписка — best-effort: её провал не должен ронять приём
-            # сообщения. В худшем случае бабл появится после рефреша.
-            logger.warning(
-                "[%s] notify_new_chat failed for chat %s: %s",
-                self.strategy_type,
-                chat_id,
-                exc,
-            )
-
-        logger.info(
-            "[%s] Created new chat %s for external %s",
-            self.strategy_type,
-            chat_id,
-            adapter.chat_id,
-        )
-
-        return chat_id
 
     async def _process_attachments(
         self,

@@ -33,7 +33,14 @@ class ChatMember(AuditMixin, MemberMixin):
     # Составной индекс для основного паттерна проверки membership:
     # get_membership(chat_id, user_id) → фильтр (chat_id, user_id, is_active=True).
     # Порядок (user_id, chat_id, is_active) — по запросу.
-    __indexes__ = [("user_id", "chat_id", "is_active")]
+    #
+    # Второй индекс — под «ленту» партнёра: партнёрский срой строится джойном
+    # chat_message → chat_member по (partner_id, is_active), поэтому partner на
+    # сообщение НЕ денормализуем (выводится отсюда).
+    __indexes__ = [
+        ("user_id", "chat_id", "is_active"),
+        ("partner_id", "is_active"),
+    ]
 
     _member_res_field = "chat_id"
     _member_res_model = staticmethod(lambda: env.models.chat)
@@ -156,6 +163,74 @@ class ChatMember(AuditMixin, MemberMixin):
             can_delete_others=True,
         )
         return stub, True
+
+    @classmethod
+    async def get_or_stub_reader(
+        cls,
+        chat_id: int,
+        user_id: int,
+        is_admin: bool,
+    ) -> tuple["ChatMember", bool]:
+        """Для READ-эндпоинтов с team-доступом.
+
+        - член чата            → его реальная запись (полные права);
+        - админ                → полный стаб (как get_or_stub_admin);
+        - team-читатель        → read-only стаб (can_write=False): доступ к чату
+          на ЧТЕНИЕ выдан правилом (chat.team_id ∈ {{team_ids}}), но писать надо
+          вступив. Проверяем через ORM chat.search — правила chat (member/team)
+          сами решают: недоступный чат вернёт пусто → 403;
+        - иначе                → 403.
+
+        Запись (post/edit/delete) по-прежнему гейтится check_membership /
+        check_can_write — team-читатель туда не проходит.
+        """
+        member = await cls.get_membership(chat_id, user_id)
+        if member:
+            return member, False
+        if is_admin:
+            stub = cls(
+                chat_id=chat_id,
+                user_id=user_id,
+                is_admin=True,
+                is_active=True,
+                last_read_message_id=0,
+                can_read=True,
+                can_write=True,
+                can_invite=True,
+                can_pin=True,
+                can_delete_others=True,
+            )
+            return stub, True
+
+        # ORM применяет правила модели chat (member OR team) для текущей сессии:
+        # доступный чат вернётся, недоступный — пусто. Член/админ уже отсечены
+        # выше, значит непустой результат = team-доступ (read-only).
+        chats = await env.models.chat.search(
+            filter=[("id", "=", chat_id)],
+            fields=["id"],
+            limit=1,
+        )
+        if chats:
+            reader_stub = cls(
+                chat_id=chat_id,
+                user_id=user_id,
+                is_admin=False,
+                is_active=True,
+                last_read_message_id=0,
+                can_read=True,
+                can_write=False,
+                can_invite=False,
+                can_pin=False,
+                can_delete_others=False,
+            )
+            return reader_stub, True
+
+        raise FaraException(
+            {
+                "content": "ACCESS_DENIED",
+                "status_code": HTTP_403_FORBIDDEN,
+            }
+        )
 
     # @classmethod
     # async def ensure_admin_member(

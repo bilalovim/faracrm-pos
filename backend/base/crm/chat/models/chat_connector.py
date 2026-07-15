@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from backend.base.crm.users.models.users import User
     from backend.base.crm.partners.models.contact_type import ContactType
     from backend.base.crm.leads.models.lead_stage import LeadStage
+    from backend.base.crm.leads.models.team_crm import TeamCrm
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,16 @@ class ChatConnector(AuditMixin, DotModel):
         relation_table=lambda: env.models.lead_stage,
         ondelete="set null",
         description="Стадия по умолчанию для создаваемых лидов",
+    )
+
+    # Команда по умолчанию: штампуется в chat.team_id при создании клиентского
+    # чата (get_or_create_partner_chat). Через неё работает team-scoped доступ
+    # к внешним чатам (правило chat.team_id in {{team_ids}}).
+    team_id: "TeamCrm | None" = Many2one(
+        relation_table=lambda: env.models.team_crm,
+        ondelete="set null",
+        index=True,
+        description="Команда-владелец создаваемых чатов (team-scoped доступ)",
     )
 
     lead_generation: bool = Boolean(
