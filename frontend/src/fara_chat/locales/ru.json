@@ -159,6 +159,7 @@
       "maxBusinessId": "MAX Business Ид аккаунта",
       "vkToken": "Ключ доступа сообщества",
       "vkGroupId": "ID сообщества (group_id)",
+      "vkConfirmation": "Строка подтверждения (Callback API)",
       "leadType": "Тип лида",
       "lastResponse": "Последний ответ",
       "createDate": "Дата создания",

@@ -557,8 +557,21 @@ class VkStrategy(ChatStrategyBase):
         """
         event_type = payload.get("type")
 
-        # 1. Подтверждение адреса сервера — отвечаем кодом сообщества.
+        # 1. Подтверждение адреса сервера — отвечаем строкой подтверждения.
         if event_type == "confirmation":
+            # 1a. Если админ вписал строку возврата в коннектор (её видно в UI
+            # сообщества: «Строка, которую должен вернуть сервер») — отдаём её
+            # напрямую. Это надёжнее и не требует у токена права manage.
+            stored = str(connector.vk_confirmation or "").strip()
+            if stored:
+                logger.info(
+                    "VK confirmation answered from stored string for "
+                    "connector %s",
+                    connector.id,
+                )
+                return stored
+
+            # 1b. Иначе — фолбэк на живой запрос кода у VK (нужно право manage).
             try:
                 group_id = await self._get_group_id(connector)
                 code_resp = await self._call(
@@ -571,7 +584,8 @@ class VkStrategy(ChatStrategyBase):
                 if isinstance(code_resp, dict):
                     code = code_resp.get("code", "") or ""
                 logger.info(
-                    "VK confirmation answered for connector %s", connector.id
+                    "VK confirmation answered via API for connector %s",
+                    connector.id,
                 )
                 return str(code)
             except Exception as exc:  # noqa: BLE001

@@ -8,7 +8,7 @@ from backend.base.system.core.enviroment import env
 from backend.base.system.core.extensions import extend
 from backend.base.crm.chat.models.chat_connector import ChatConnector
 from backend.base.system.dotorm.dotorm.decorators import onchange
-from backend.base.system.dotorm.dotorm.fields import Selection
+from backend.base.system.dotorm.dotorm.fields import Char, Selection
 
 # поддержка IDE, видны все аттрибуты базового класса
 if TYPE_CHECKING:
@@ -48,6 +48,16 @@ class ChatConnectorVkMixin(_Base):
 
     # Расширяем Selection поле type
     type: str = Selection(selection_add=[("vk", "ВКонтакте")])
+
+    # Строка подтверждения Callback API (в UI сообщества: «Строка, которую
+    # должен вернуть сервер», напр. "76c42d65"). Сервер обязан вернуть её
+    # ПРОСТЫМ ТЕКСТОМ на POST {"type":"confirmation"}. Если поле заполнено —
+    # handle_webhook отдаёт его напрямую (не требует права manage у токена);
+    # иначе фолбэк на живой groups.getCallbackConfirmationCode.
+    vk_confirmation: str | None = Char(
+        max_length=100,
+        description="VK Callback confirmation string (строка возврата)",
+    )
 
     @onchange("type")
     async def onchange_type_vk(self) -> dict:

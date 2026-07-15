@@ -482,14 +482,16 @@ class ChatStrategyBase(ABC):
             create_datetime=now,
             update_datetime=now,
         )
+        # create() возвращает id — присваиваем его тому же объекту, лишний
+        # get() не нужен: chat_member.chat_id это FK, ему достаточно id.
         chat_id = await env.models.chat.create(payload=chat)
-        chat_obj = await env.models.chat.get(chat_id)
+        chat.id = chat_id
 
         # TODO: bulk create
         # Подписываем руководителей коннектора как участников.
         for manager in managers or []:
             manager_member = env.models.chat_member(
-                chat_id=chat_obj,
+                chat_id=chat,
                 user_id=manager,
             )
             await env.models.chat_member.create(payload=manager_member)
@@ -500,7 +502,7 @@ class ChatStrategyBase(ABC):
             and external_account.contact_id.partner_id
         ):
             partner_member = env.models.chat_member(
-                chat_id=chat_obj,
+                chat_id=chat,
                 partner_id=external_account.contact_id.partner_id,
             )
             await env.models.chat_member.create(payload=partner_member)
@@ -518,6 +520,21 @@ class ChatStrategyBase(ABC):
             item_title=item_title,
             item_url=item_url,
         )
+
+        try:
+            cm = env.apps.chat.chat_manager
+            for manager in managers or []:
+                if manager.id:
+                    await cm.notify_new_chat(manager.id, chat_id)
+        except Exception as exc:  # noqa: BLE001
+            # Подписка — best-effort: её провал не должен ронять приём
+            # сообщения. В худшем случае бабл появится после рефреша.
+            logger.warning(
+                "[%s] notify_new_chat failed for chat %s: %s",
+                self.strategy_type,
+                chat_id,
+                exc,
+            )
 
         logger.info(
             "[%s] Created new chat %s for external %s",

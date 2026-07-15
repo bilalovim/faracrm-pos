@@ -95,6 +95,16 @@ export function ViewFormConnectorVk() {
             placeholder="https://api.vk.com/method"
           />
         </FormRow>
+        <FormRow cols={1}>
+          <FieldChar
+            name="vk_confirmation"
+            label={t(
+              'connector.fields.vkConfirmation',
+              'Строка подтверждения (Callback API)',
+            )}
+            placeholder="76c42d65"
+          />
+        </FormRow>
         <Group justify="flex-end" mt="xs">
           <Button
             leftSection={<IconUserSearch size={16} />}
@@ -182,7 +192,7 @@ registerExtension(
   'chat_connector',
   ViewFormConnectorVk,
   'after:FormTab:connection',
-  ['access_token', 'external_account_id', 'connector_url'],
+  ['access_token', 'external_account_id', 'connector_url', 'vk_confirmation'],
 );
 
 registerExtension(

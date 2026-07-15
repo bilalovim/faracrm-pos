@@ -159,6 +159,7 @@
       "maxBusinessId": "MAX Business account ID",
       "vkToken": "Community access token",
       "vkGroupId": "Community ID (group_id)",
+      "vkConfirmation": "Confirmation string (Callback API)",
       "leadType": "Lead Type",
       "lastResponse": "Last Response",
       "createDate": "Created",
