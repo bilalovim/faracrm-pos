@@ -3,6 +3,7 @@
 
 from typing import TYPE_CHECKING
 
+from backend.base.system.dotorm.dotorm.decorators import hybridmethod
 from backend.base.system.dotorm.dotorm.fields import (
     Integer,
     Char,
@@ -87,10 +88,33 @@ class Contact(AuditMixin, DotModel):
             connector_type
         )
 
-    @classmethod
-    async def detect_contact_type(cls, value: str) -> str | None:
-        """Автоопределение типа контакта по значению."""
-        return await env.models.contact_type.detect_contact_type(value)
+    @staticmethod
+    def _canon_email(payload) -> None:
+        """Канонизировать email в lowercase ПРИ ЗАПИСИ.
+
+        Корень проблемы «входящее письмо уезжает в новый чат»: email регистро-
+        независим по RFC, входящий адрес адаптер приводит к .lower(), а
+        сохранённый контакт хранился как введён (с заглавными) → матч
+        промахивался. Нормализуем на записи, чтобы ХРАНЕНИЕ было каноничным и
+        find_for_webhook матчил обычным `=` (индексируемо), без LOWER() на
+        чтении. Детект по '@': телефоны/логины/screen-name (без '@') не трогаем.
+        """
+        name = payload.name
+        if isinstance(name, str) and "@" in name:
+            payload.name = name.strip().lower()
+
+    @hybridmethod
+    async def create(self, payload, session=None, depends_jobs=None) -> int:
+        Contact._canon_email(payload)
+        return await super().create(payload, session, depends_jobs)
+
+    async def update(
+        self, payload, fields=None, session=None, depends_jobs=None
+    ):
+        # Нормализуем только если поле name реально пишется.
+        if "name" in (fields or payload.assigned_fields()):
+            Contact._canon_email(payload)
+        return await super().update(payload, fields, session, depends_jobs)
 
     @classmethod
     async def find_for_webhook(
@@ -106,7 +130,10 @@ class Contact(AuditMixin, DotModel):
         if not value:
             return None
 
-        # 1) Точное совпадение по типу
+        # 1) Точное совпадение по типу. Обычное `=` (индексируемо): email
+        #    хранится каноничным lowercase (Contact._canon_email при записи +
+        #    миграция легаси), входящий адрес адаптер тоже .lower() → регистр
+        #    консистентен с обеих сторон, LOWER() на чтении не нужен.
         exact = await env.models.contact.search(
             filter=[
                 ("contact_type_id", "=", contact_type.id),

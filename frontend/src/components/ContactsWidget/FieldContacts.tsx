@@ -201,8 +201,12 @@ export function FieldContacts({
   // Показываем только если владелец-партнёр известен И есть хотя бы один
   // контакт (без канала чат бессмысленен). Только для партнёров.
   const activeContactsCount = contacts.filter(c => !c._isDeleted).length;
-  const canOpenChat =
-    !!ownerId && activeContactsCount > 0 && relatedField === 'partner_id';
+  // Кнопка чата из виджета «Контакты» отключена: она создавала ЛИЧНЫЙ (direct)
+  // чат с партнёром, что теперь запрещено (модель 1:1 — переписка с клиентом в
+  // едином ГРУППОВОМ чате партнёра, см. вкладку «Чат» в форме + create-правило
+  // на бэке). onOpenChat остаётся, но не показывается.
+  void activeContactsCount;
+  const canOpenChat = false;
 
   const handleOpenChat = async () => {
     if (!ownerId) return;

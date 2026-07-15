@@ -814,36 +814,49 @@ async def create_chat(req: Request, body: ChatCreate):
     # Определяем тип чата: внутренний или внешний
     has_partners = len(body.partner_ids) > 0
 
+    # ── Инварианты модели 1:1 с партнёром ──────────────────────────────
+    # (1) ЛИЧНЫЙ (direct) чат С ПАРТНЁРОМ запрещён — вынесено в create-ПРАВИЛО
+    #     на chat (chat/app.py: "Chat: forbid direct chat with partner"): после
+    #     вставки запись перепроверяется по домену и direct+external отклоняется.
+    #     Здесь дополнительно: direct-ветка ниже требует ровно 1 пользователя,
+    #     так что direct+partner не проходит и по коду.
+    # (2) У партнёра может быть только ОДИН внешний чат (кросс-записевая
+    #     уникальность — правилом не выразить): если у любого из указанных
+    #     партнёров уже есть внешний чат (group ИЛИ direct), где он активный
+    #     участник — второй создавать нельзя.
+    if has_partners:
+        # Один запрос по всем партнёрам сразу (ANY) — без N+1.
+        _taken_rows = await env.apps.db.get_session().execute(
+            "SELECT DISTINCT cm.partner_id FROM chat c "
+            "JOIN chat_member cm ON cm.chat_id = c.id "
+            "  AND cm.partner_id = ANY(%s) AND cm.is_active = true "
+            "WHERE c.is_internal = false AND c.active = true "
+            "  AND c.chat_type != 'record'",
+            (body.partner_ids,),
+        )
+        _taken = [r["partner_id"] for r in _taken_rows]
+        if _taken:
+            raise FaraException(
+                {
+                    "content": "PARTNER_CHAT_EXISTS",
+                    "detail": f"У партнёров {sorted(_taken)} уже есть "
+                    "внешний чат — второй создавать нельзя",
+                }
+            )
+
     async with env.apps.db.get_transaction():
         if body.chat_type == "direct":
-            # Для direct чата нужен ровно один собеседник
-            total_recipients = len(body.user_ids) + len(body.partner_ids)
-            if total_recipients != 1:
+            # direct+partner уже отсечён выше → только внутренний user-user
+            # (ровно один собеседник-пользователь).
+            if len(body.user_ids) != 1:
                 raise FaraException(
                     {"content": "DIRECT_CHAT_REQUIRES_ONE_RECIPIENT"}
                 )
-
-            if has_partners:
-                # Создаём внешний чат с партнёром
-                partner_id = body.partner_ids[0]
-                partner = await env.models.partner.get(partner_id)
-                if not partner:
-                    raise FaraException({"content": "PARTNER_NOT_FOUND"})
-
-                chat = await env.models.chat.create_partner_chat(
-                    user_id=user_id,
-                    partner_id=partner_id,
-                    chat_name=partner.name,
-                )
-                all_user_ids = [user_id]
-                is_internal = False
-            else:
-                # Создаём внутренний чат между пользователями
-                chat = await env.models.chat.create_direct_chat(
-                    user1_id=user_id, user2_id=body.user_ids[0]
-                )
-                all_user_ids = [user_id, body.user_ids[0]]
-                is_internal = True
+            chat = await env.models.chat.create_direct_chat(
+                user1_id=user_id, user2_id=body.user_ids[0]
+            )
+            all_user_ids = [user_id, body.user_ids[0]]
+            is_internal = True
         else:
             # Групповой чат
             if not body.name:
