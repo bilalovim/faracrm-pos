@@ -556,6 +556,18 @@ class Chat(AuditMixin, DotModel):
                     managers = conns[0].manager_ids or []
                     team = conns[0].team_id
 
+            # Имя чата = имя партнёра (не "partner:id"). Если вызывающий не
+            # передал имя (кнопка «Создать чат» из формы вызывает без
+            # partner_name) — берём из БД.
+            if not partner_name:
+                partner = await env.models.partner.search(
+                    filter=[("id", "=", partner_id)],
+                    fields=["id", "name"],
+                    limit=1,
+                )
+                if partner:
+                    partner_name = partner[0].name
+
             default_perms = DEFAULT_PERMISSIONS["group"]
             now = datetime.now(timezone.utc)
             chat = Chat(
