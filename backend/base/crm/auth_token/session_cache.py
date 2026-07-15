@@ -31,10 +31,12 @@ class CachedSession:
     ttl: int
     create_datetime: datetime
     revoked: bool = False
-    # Развёрнутые коды ролей (с учётом based_role_ids) — кладутся при
-    # сборке сессии, чтобы field-level проверка не ходила в БД на каждый
-    # write. Сбрасываются через invalidate_user при смене ролей.
-    role_codes: tuple[str, ...] = ()
+    # Развёрнутые роли (с учётом based_role_ids) как пары (id, code) —
+    # кладутся при сборке сессии, чтобы field-level проверка не ходила в БД
+    # на каждый write, а роли в сессии были полноценными объектами Role
+    # (id обязателен для сериализации ответа, code — для проверки доступа).
+    # Сбрасываются через invalidate_user при смене ролей.
+    role_codes: tuple[tuple[int, str], ...] = ()
     # ID команд пользователя (team_crm.user_ids) — кладутся при сборке сессии,
     # чтобы доступ по командам ({{team_ids}}) не ходил в БД на каждую проверку.
     # Инвалидация — тем же invalidate_user (publish_roles_changed при смене

@@ -378,11 +378,14 @@ class User(PolymorphicParentMixin):
         return result
 
     @classmethod
-    async def get_all_role_codes(cls, user_id: int) -> set[str]:
-        """Коды всех ролей пользователя, развёрнутые по based_role_ids.
+    async def get_all_role_codes(cls, user_id: int) -> list[tuple[int, str]]:
+        """Роли пользователя (id + code), развёрнутые по based_role_ids.
 
-        Используется при сборке/кэшировании сессии (роли кладутся в
-        session.user_id.role_ids) и как fallback в field-level проверке.
+        Возвращает пары (id, code): id нужен чтобы роли в сессии
+        (session.user_id.role_ids) были ПОЛНОЦЕННЫМИ объектами Role, а не
+        стабами {code} — иначе сериализация ответа (напр. default_values,
+        где user_id = текущий юзер из сессии) падает на required-поле
+        role_ids[].id. code используется field-level проверкой доступа.
         Один рекурсивный CTE.
         """
         query = """
@@ -395,13 +398,17 @@ class User(PolymorphicParentMixin):
                 FROM role_tree rt
                 JOIN role_based_many2many rb ON rb.role_id = rt.role_id
             )
-            SELECT DISTINCT r.code
+            SELECT DISTINCT r.id, r.code
             FROM roles r
             JOIN role_tree t ON r.id = t.role_id
         """
         session = cls._get_db_session()
         result = await session.execute(query, [user_id], cursor="fetch")
-        return {row["code"] for row in result if row.get("code")}
+        return [
+            (row["id"], row["code"])
+            for row in result
+            if row.get("id") is not None and row.get("code")
+        ]
 
     @classmethod
     async def get_all_team_ids(cls, user_id: int) -> list[int]:

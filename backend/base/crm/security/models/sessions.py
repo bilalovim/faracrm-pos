@@ -333,8 +333,8 @@ class Session(DotModel):
         # Развёрнутые роли в сессию — чтобы field-level проверка читала их
         # без запроса в БД. Не-кэшируемый путь грузит свежие на каждый
         # запрос (один CTE), поэтому инвалидация тут не нужна.
-        codes = await env.models.user.get_all_role_codes(session_id["user_id"])
-        self._set_role_codes(session_obj, codes)
+        roles = await env.models.user.get_all_role_codes(session_id["user_id"])
+        self._set_role_codes(session_obj, roles)
         team_ids = await env.models.user.get_all_team_ids(
             session_id["user_id"]
         )
@@ -535,9 +535,10 @@ class Session(DotModel):
             return None
 
         row = result[0]
-        # Развёрнутые коды ролей кладём в кэш — чтобы field-level проверка
-        # на cache-hit не ходила в БД. Обновляются через invalidate_user.
-        codes = await env.models.user.get_all_role_codes(row["user_id"])
+        # Развёрнутые роли (id, code) кладём в кэш — чтобы field-level
+        # проверка на cache-hit не ходила в БД, а роли в сессии были
+        # полноценными (id). Обновляются через invalidate_user.
+        roles = await env.models.user.get_all_role_codes(row["user_id"])
         team_ids = await env.models.user.get_all_team_ids(row["user_id"])
         cached = CachedSession(
             session_id=row["id"],
@@ -551,7 +552,7 @@ class Session(DotModel):
             expired_datetime=row["expired_datetime"],
             ttl=row["ttl"],
             create_datetime=row["create_datetime"],
-            role_codes=tuple(codes),
+            role_codes=tuple(roles),
             team_ids=tuple(team_ids),
         )
         await cache.put(cached)
@@ -626,14 +627,18 @@ class Session(DotModel):
         )
 
     @staticmethod
-    def _set_role_codes(session_obj: "Session", codes) -> None:
-        """Кладёт развёрнутые роли в сессию как Role(code=...).
+    def _set_role_codes(session_obj: "Session", roles) -> None:
+        """Кладёт развёрнутые роли в сессию как Role(id=..., code=...).
 
-        Field-level проверка (check_field_access) читает их прямо из
-        session.user_id.role_ids — без запроса в БД.
+        `roles` — пары (id, code) из User.get_all_role_codes (или из кэша,
+        CachedSession.role_codes). id обязателен: без него роль в сессии —
+        стаб {code}, и сериализация ответа, где отдаётся текущий юзер из
+        сессии (напр. default_values.user_id), падает на required role_ids[].id.
+        code читает field-level проверка (check_field_access) — прямо из
+        session.user_id.role_ids, без запроса в БД.
         """
         session_obj.user_id.role_ids = [
-            env.models.role(code=c) for c in (codes or ())
+            env.models.role(id=i, code=c) for (i, c) in (roles or ())
         ]
 
     @staticmethod
