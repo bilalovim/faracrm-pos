@@ -307,7 +307,7 @@ async def create_partner_chat(req: Request, partner_id: int):
     user_id = auth_session.user_id.id
 
     chat = await env.models.chat.get_or_create_partner_chat(partner_id)
-    await env.models.chat._ensure_membership(chat.id, user_id)
+    await chat._ensure_membership(chat.id, user_id)
     return {"chat_id": chat.id, "partner_id": partner_id}
 
 
