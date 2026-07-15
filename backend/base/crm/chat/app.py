@@ -221,23 +221,12 @@ class ChatApp(Service):
             perms={"read": True},
         )
 
-        # Chat CREATE — запрет ЛИЧНОГО (direct) чата с партнёром (внешний direct).
-        # Модель 1:1: переписка с клиентом идёт в ГРУППОВОЙ чат партнёра.
-        # Разрешаем создавать чат только если он НЕ (direct И внешний). create
-        # перепроверяет запись по домену ПОСЛЕ вставки (primary.create →
-        # _check_access(CREATE, record_ids=[new_id])), поэтому direct+
-        # is_internal=false отклоняется на уровне ORM (любой путь создания).
-        # Групповые/внутренние личные/record — проходят. is_admin/System — байпас.
-        await create_rule_if_missing(
-            name="Chat: forbid direct chat with partner",
-            model_name="chat",
-            domain=[
-                ["chat_type", "!=", "direct"],
-                "or",
-                ["is_internal", "=", True],
-            ],
-            perms={"create": True},
-        )
+        # Запрет ЛИЧНОГО (direct) чата с партнёром НЕ выражается create-правилом:
+        # различающее «есть партнёр» — не поле chat, а is_internal вычисляется
+        # ТРИГГЕРОМ по составу участников ПОСЛЕ вставки, тогда как create-правило
+        # перепроверяет запись сразу после INSERT (мемберов ещё нет) → ложно
+        # блокировало бы легитимный direct user-user. Поэтому ограничение —
+        # императивное, в create_chat (chats.py), до создания, по partner_ids.
 
         # ChatMember — chat_member.chat_id IN (SELECT chat_id FROM chat_member WHERE user_id=...)
         # Юзер видит участников только тех чатов где он сам участник

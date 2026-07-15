@@ -54,7 +54,7 @@ test.describe('FormPanels — messages, attachments, activities', () => {
   function panelIcons(page: any) {
     return {
       activities: page.locator('button[title*="ктивност"], button[title*="ctivit"]'),
-      messages: page.locator('button[title*="ообщени"], button[title*="essage"]'),
+      messages: page.locator('button[title*="аметк"], button[title*="otes"]'),
       attachments: page.locator('button[title*="ложени"], button[title*="ttachment"]'),
     };
   }
