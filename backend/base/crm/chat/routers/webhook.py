@@ -15,7 +15,6 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.status import (
     HTTP_200_OK,
     HTTP_400_BAD_REQUEST,
-    HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
 )
 
@@ -58,7 +57,25 @@ async def chat_webhook(
     """
     env: "Environment" = req.app.state.env
 
-    # 1. Читаем сырые данные
+    # 1. Получаем коннектор и валидируем
+    connector = await env.models.chat_connector.search(
+        filter=[
+            ("id", "=", connector_id),
+            ("webhook_hash", "=", webhook_hash),
+            ("active", "=", True),
+        ],
+        fields_nested={"contact_type_id": ["id", "name", "is_phone_format"]},
+        limit=1,
+    )
+    if connector:
+        connector = connector[0]
+    else:
+        return JSONResponse(
+            content={"error": "CONNECTOR_NOT_FOUND"},
+            status_code=HTTP_404_NOT_FOUND,
+        )
+
+    # 2. Читаем сырые данные
     try:
         raw_data = await req.body()
         data = raw_data.decode("utf-8")
@@ -81,39 +98,7 @@ async def chat_webhook(
             content={"error": "READ_ERROR"}, status_code=HTTP_400_BAD_REQUEST
         )
 
-    # 2. Получаем коннектор и валидируем
-    connector = await env.models.chat_connector.search(
-        filter=[("id", "=", connector_id)],
-        fields_nested={"contact_type_id": ["id", "name", "is_phone_format"]},
-        limit=1,
-    )
-    if connector:
-        connector = connector[0]
-    else:
-        return JSONResponse(
-            content={"error": "CONNECTOR_NOT_FOUND"},
-            status_code=HTTP_404_NOT_FOUND,
-        )
-
-    # 3. Проверяем webhook_hash
-    if connector.webhook_hash != webhook_hash:
-        logger.warning(
-            "Chat webhook: Invalid hash for connector %s", connector_id
-        )
-        return JSONResponse(
-            content={"error": "INVALID_HASH"},
-            status_code=HTTP_403_FORBIDDEN,
-        )
-
-    # 4. Проверяем активность коннектора
-    if not connector.active:
-        logger.warning("Chat webhook: Connector %s is inactive", connector_id)
-        return JSONResponse(
-            content={"error": "CONNECTOR_INACTIVE"},
-            status_code=HTTP_400_BAD_REQUEST,
-        )
-
-    # 5. Делегируем обработку стратегии (вне транзакции - стратегия сама управляет транзакциями)
+    # 3. Делегируем обработку стратегии (вне транзакции - стратегия сама управляет транзакциями)
     strategy = connector.strategy
     result = await strategy.handle_webhook(
         connector=connector,
@@ -121,7 +106,7 @@ async def chat_webhook(
         env=env,
     )
 
-    # 6. Формируем HTTP-ответ.
+    # 4. Формируем HTTP-ответ.
     # Большинство провайдеров довольствуются JSON {"ok": true}. Но некоторые
     # (VK Callback API) требуют ПРОСТОЙ ТЕКСТ: строку-код на type="confirmation"
     # и "ok" на остальные события — JSON они не принимают. Поэтому если стратегия
