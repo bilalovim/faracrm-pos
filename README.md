@@ -8,8 +8,8 @@
 
 **Modular CRM system built on FastAPI + React with a custom ORM (DotORM), real-time chat via WebSocket, and integrations with external messengers.**
 
-**Official site:** [faracrm.com](https://faracrm.com)
-**Demo:** [demo.faracrm.com](https://demo.faracrm.com)
+🌐 **Official site:** [faracrm.com](https://faracrm.com)
+🕹️ **Demo:** [demo.faracrm.com](https://demo.faracrm.com)
 📖 **Full documentation:** [docs.faracrm.com](https://docs.faracrm.com)
 
 ---
@@ -22,11 +22,13 @@
 | **ORM** | DotORM (in-house async ORM) |
 | **Frontend** | React 18, TypeScript, Mantine UI v8, Redux Toolkit |
 | **Real-time** | WebSocket + PostgreSQL LISTEN/NOTIFY (redis optional) |
-| **Integrations** | Telegram, WhatsApp, Avito, Email (IMAP/SMTP) |
+| **Integrations** | Telegram, WhatsApp, Avito, VK, Maks Email (IMAP/SMTP) |
+| **Telephony** | Asterisk, Sipuni, Megafon, Mts, Beeline |
 
 ## Quick start
 
-### Docker (recommended)
+### Docker
+<small>It is used for running locally without dependencies and for demonstrating capabilities; there is also a production build, but that is a separate script.</small>
 
 ```bash
 docker compose up --build
@@ -37,6 +39,7 @@ docker compose up --build
 - Backend direct: http://127.0.0.1:8000
 
 ### Local development
+<small>Used by developers for modifications; includes debug mode and other useful IDE features.</small>
 
 **Backend:**
 ```bash
@@ -53,6 +56,9 @@ cd frontend
 yarn install
 yarn dev
 ```
+### Production
+<small>Check the documentation, specifically the deployment guide section.</small>
+
 
 ## Project layout
 

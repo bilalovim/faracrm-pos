@@ -44,15 +44,15 @@ from backend.base.system.core.exceptions.environment import FaraException
 async def _make_session(user) -> Session:
     """Build a Session-like object — enough for AccessChecker.
 
-    Hydrates user.role_ids with EXPANDED role codes, exactly as the real
-    session build (Session.session_check) does. The field-level checker
+    Hydrates user.role_ids with EXPANDED roles (id + code), exactly as the
+    real session build (Session.session_check) does. The field-level checker
     reads codes straight from the session (no DB fallback), so test
     sessions must carry them too.
     """
     from backend.base.crm.security.models.roles import Role
 
-    codes = await User.get_all_role_codes(user.id)
-    user.role_ids = [Role(code=c) for c in codes]
+    roles = await User.get_all_role_codes(user.id)
+    user.role_ids = [Role(id=i, code=c) for (i, c) in roles]
     return Session(
         id=0,
         active=True,
