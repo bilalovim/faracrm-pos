@@ -20,6 +20,7 @@ const EMAIL_FIELDS = [
   'imap_ssl',
   'email_username',
   'email_password',
+  'imap_last_uid',
 ];
 
 /**
@@ -256,6 +257,10 @@ export function ViewFormConnectorEmail() {
           <FieldSelection
             name="imap_ssl"
             label={t('connector.fields.imapSsl', 'SSL')}
+          />
+          <FieldInteger
+            name="imap_last_uid"
+            label={t('connector.fields.imapLastUid', 'imapLastUid')}
           />
         </FormRow>
       </FormSection>

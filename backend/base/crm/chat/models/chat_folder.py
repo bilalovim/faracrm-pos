@@ -44,20 +44,32 @@ def _default_current_user():
 
 
 # Встроенные глобальные папки (user_id IS NULL). Домены — обычные над chat.
+# ВНУТРЕННИЕ папки фильтруют is_internal=true: без этого условия внешние
+# (клиентские) чаты — chat_type='group', is_internal=false — попадали и во
+# внутренние «Все»/«Группы» (они уже показаны в секции «Внешние»).
 DEFAULT_GLOBAL_FOLDERS = [
-    {"kind": "all", "name": "Все", "icon": "all", "domain": [], "sequence": 0},
+    {
+        "kind": "all",
+        "name": "Все",
+        "icon": "all",
+        "domain": [["is_internal", "=", True]],
+        "sequence": 0,
+    },
     {
         "kind": "direct",
         "name": "Личные",
         "icon": "direct",
-        "domain": [["chat_type", "=", "direct"]],
+        "domain": [["chat_type", "=", "direct"], ["is_internal", "=", True]],
         "sequence": 10,
     },
     {
         "kind": "group",
         "name": "Группы",
         "icon": "group",
-        "domain": [["chat_type", "in", ["group", "channel"]]],
+        "domain": [
+            ["chat_type", "in", ["group", "channel"]],
+            ["is_internal", "=", True],
+        ],
         "sequence": 20,
     },
     # Внешние (клиентские) чаты. Резолвятся get_chats по kind, НЕ доменом:

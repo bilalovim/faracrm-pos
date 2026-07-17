@@ -65,6 +65,33 @@ SAFE_URL_SCHEMES = {"http", "https", "mailto"}
 # Self-closing теги
 VOID_TAGS = {"br", "hr", "img"}
 
+# Теги, у которых надо выбросить и САМ ТЕГ, И ЕГО СОДЕРЖИМОЕ.
+#
+# Обычные незнакомые теги мы разворачиваем: <div>привет</div> → «привет», текст
+# сохраняем. Но у этих внутри не текст письма, а код: CSS, JS, служебные данные.
+# Без этого списка содержимое <style> прилетало в чат видимым текстом — письмо
+# показывалось как «Обустроить дом a {text-decoration: none }@media only
+# screen {html {min-height: 100%...». Ровно так и выглядели письма рассылок:
+# у них весь CSS лежит в <style> в <head>.
+#
+# NB: HTMLParser для script/style сам переходит в CDATA-режим и отдаёт их
+# содержимое одним куском в handle_data — поэтому перехватывать надо именно там.
+#
+# СЮДА МОЖНО КЛАСТЬ ТОЛЬКО ПАРНЫЕ ТЕГИ. Void-теги (meta, link, base) закрывающего
+# не имеют, HTMLParser зовёт для них лишь handle_starttag — счётчик ушёл бы в
+# плюс и не вернулся, и мы бы выбросили ВСЁ ОСТАЛЬНОЕ ПИСЬМО. Проверено: с meta
+# в этом списке текст письма терялся целиком. Им тут делать нечего и так:
+# содержимого у них нет, а сами они отсекаются проверкой ALLOWED_TAGS.
+# По той же причине не кладём head: у него бывает пропущен </head>, а всё
+# осмысленное внутри (title/style) перечислено отдельно.
+SKIP_CONTENT_TAGS = {
+    "style",
+    "script",
+    "title",
+    "noscript",
+    "template",
+}
+
 
 def _is_safe_url(url: str) -> bool:
     """Проверяет что URL использует безопасную схему."""
@@ -83,9 +110,17 @@ class _Sanitizer(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=False)
         self.result: list[str] = []
+        # Глубина вложенности внутри SKIP_CONTENT_TAGS. Счётчик, а не флаг:
+        # теги могут вкладываться, и выходить надо из последнего.
+        self._skip_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]):
         tag = tag.lower()
+        if tag in SKIP_CONTENT_TAGS:
+            self._skip_depth += 1
+            return
+        if self._skip_depth:
+            return
         if tag not in ALLOWED_TAGS:
             return
 
@@ -115,10 +150,19 @@ class _Sanitizer(HTMLParser):
 
     def handle_endtag(self, tag: str):
         tag = tag.lower()
+        if tag in SKIP_CONTENT_TAGS:
+            if self._skip_depth:
+                self._skip_depth -= 1
+            return
+        if self._skip_depth:
+            return
         if tag in ALLOWED_TAGS and tag not in VOID_TAGS:
             self.result.append(f"</{tag}>")
 
     def handle_data(self, data: str):
+        # Внутри <style>/<script> это не текст письма, а код — выбрасываем.
+        if self._skip_depth:
+            return
         self.result.append(
             data.replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -126,9 +170,13 @@ class _Sanitizer(HTMLParser):
         )
 
     def handle_entityref(self, name: str):
+        if self._skip_depth:
+            return
         self.result.append(f"&{name};")
 
     def handle_charref(self, name: str):
+        if self._skip_depth:
+            return
         self.result.append(f"&#{name};")
 
     def handle_comment(self, data: str):

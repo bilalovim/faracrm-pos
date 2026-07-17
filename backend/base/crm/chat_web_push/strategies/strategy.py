@@ -29,7 +29,14 @@ class WebPushStrategy(ChatStrategyBase):
         return None
 
     async def chat_send_message(
-        self, connector, user_from, body, chat_id=None, recipients_ids=None
+        self,
+        connector,
+        user_from,
+        body,
+        chat_id=None,
+        recipients_ids=None,
+        thread_message_id: str | None = None,
+        attachments: list | None = None,
     ):
         import uuid
 

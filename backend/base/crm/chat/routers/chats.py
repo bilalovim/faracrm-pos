@@ -598,7 +598,8 @@ async def get_folders_unread(req: Request):
     # активно. chat_type берём тут же — по нему резолвятся встроенные папки.
     unread_rows = await session.execute(
         """
-        SELECT m.chat_id, c.chat_type, COUNT(*) AS unread_count
+        SELECT m.chat_id, c.chat_type, c.is_internal,
+               COUNT(*) AS unread_count
         FROM chat_message m
         JOIN chat_member cm
           ON cm.chat_id = m.chat_id
@@ -611,7 +612,7 @@ async def get_folders_unread(req: Request):
         WHERE m.is_deleted = false
           AND (m.author_user_id IS NULL OR m.author_user_id != %s)
           AND m.id > COALESCE(cm.last_read_message_id, 0)
-        GROUP BY m.chat_id, c.chat_type
+        GROUP BY m.chat_id, c.chat_type, c.is_internal
         """,
         (user_id, user_id),
     )
@@ -624,8 +625,27 @@ async def get_folders_unread(req: Request):
     type_by_chat: dict[int, str] = {
         r["chat_id"]: r["chat_type"] for r in unread_rows
     }
+    # is_internal нужен, чтобы внутренние папки (all/direct/group) не считали
+    # внешние чаты. Этот цикл резолвит папки по kind, а НЕ по domain, поэтому
+    # фильтр из DEFAULT_GLOBAL_FOLDERS.domain сюда не долетает — дублируем его.
+    internal_by_chat: dict[int, bool] = {
+        r["chat_id"]: r["is_internal"] for r in unread_rows
+    }
     unread_ids = list(unread_by_chat)
     total_all = sum(unread_by_chat.values())
+    total_internal = sum(
+        cnt for ch, cnt in unread_by_chat.items() if internal_by_chat.get(ch)
+    )
+    # Внешние = не-внутренние. external_all и external_mine дают одну сумму:
+    # непрочитанное считается по watermark участника (запрос выше джойнит
+    # chat_member по user_id), а он есть только там, где юзер УЖЕ участник —
+    # то есть в «Мои». Team-видимые, но не свои чаты watermark'а не имеют и в
+    # unread не попадают, поэтому «Все» и «Мои» по непрочитанным совпадают.
+    total_external = sum(
+        cnt
+        for ch, cnt in unread_by_chat.items()
+        if not internal_by_chat.get(ch)
+    )
 
     # (2) Карта непрочитанный чат → id коннектора(ов) — один bulk-запрос,
     # вместо запроса на каждую папку коннектора.
@@ -662,20 +682,28 @@ async def get_folders_unread(req: Request):
                 if cid in connectors_by_chat.get(ch, ())
             )
         elif folder.kind == "direct":
+            # Внутренняя папка → только внутренние чаты (см. internal_by_chat).
             total = sum(
                 cnt
                 for ch, cnt in unread_by_chat.items()
-                if type_by_chat[ch] == "direct"
+                if type_by_chat[ch] == "direct" and internal_by_chat.get(ch)
             )
         elif folder.kind == "group":
             total = sum(
                 cnt
                 for ch, cnt in unread_by_chat.items()
                 if type_by_chat[ch] in ("group", "channel")
+                and internal_by_chat.get(ch)
             )
+        elif folder.kind in ("external_all", "external_mine"):
+            # Внешние папки → только внешние чаты. Ветка ДО catch-all ниже: у
+            # них domain=None, иначе они провалились бы в total_internal и
+            # показывали 0.
+            total = total_external
         elif folder.kind == "all" or not folder.domain:
-            # «Все» / пустой domain = все непрочитанные юзера.
-            total = total_all
+            # «Все» под «Внутренними» = все ВНУТРЕННИЕ непрочитанные (внешние
+            # живут в своей секции и своих папках external_*).
+            total = total_internal
         else:
             # Кастомная папка с произвольным domain. Резолвим по domain, но
             # узко — только по непрочитанным (id IN unread_ids), не по всем

@@ -31,6 +31,14 @@ class ChatExternalMessage(DotModel):
 
     __table__ = "chat_external_message"
 
+    # (external_id, connector_id) — ключ поиска и у find_by_external_id
+    # (дедуп входящих на каждом тике крона), и у find_chat_by_external_ids
+    # (резолв треда письма). Индексов не было вообще → seq scan по таблице,
+    # которая растёт с каждым сообщением.
+    __indexes__ = [
+        ("external_id", "connector_id"),
+    ]
+
     id: int = Integer(primary_key=True)
 
     # Внешний идентификатор сообщения
@@ -102,6 +110,68 @@ class ChatExternalMessage(DotModel):
         """
         existing = await self.find_by_external_id(external_id, connector_id)
         return existing is not None
+
+    @hybridmethod
+    async def thread_outgoing_id(
+        self, chat_id: int, connector_id: int
+    ) -> str | None:
+        """
+        ИСХОДЯЩЕЕ: внешний id ПОСЛЕДНЕГО сообщения этого чата (или None).
+
+        Для email это Message-ID последнего письма — его кладём в In-Reply-To
+        нового, чтобы почтовик получателя собрал переписку в одну ветку.
+
+        Одного id (последнего) достаточно: на маршрутизацию это не влияет
+        (ответ клиента вернёт наш Message-ID сам, его ставит его почтовик), а
+        для «сшивания ветки» хватает ссылки на предыдущее письмо.
+        """
+        session = self._get_db_session()
+        rows = await session.execute(
+            """
+            SELECT em.external_id
+            FROM chat_external_message em
+            JOIN chat_message m ON m.id = em.message_id
+            WHERE m.chat_id = %s AND em.connector_id = %s
+            ORDER BY em.id DESC
+            LIMIT 1
+            """,
+            (chat_id, connector_id),
+        )
+        return rows[0]["external_id"] if rows else None
+
+    @hybridmethod
+    async def thread_incoming_chat(
+        self, external_ids: list[str], connector_id: int
+    ) -> int | None:
+        """
+        ВХОДЯЩЕЕ: в какой чат лёг тред, на который отвечает это сообщение.
+
+        Вход — СПИСОК (не один id), и это намеренно: входящее письмо несёт в
+        заголовках References целую цепочку + In-Reply-To. Ищем по совпадению с
+        ЛЮБЫМ из них (пересечение множеств), потому что клиент или релей может
+        срезать часть заголовков — уцелевшего одного хватит, чтобы узнать чат.
+        Из совпавших берём самый свежий.
+
+        Возвращает chat_id или None. None — не ошибка: письмо могло прийти
+        новым, а не ответом; вызывающий откатится на поиск по адресу.
+        """
+        if not external_ids:
+            return None
+
+        session = self._get_db_session()
+        rows = await session.execute(
+            """
+            SELECT m.chat_id
+            FROM chat_external_message em
+            JOIN chat_message m ON m.id = em.message_id
+            WHERE em.external_id = ANY(%s::text[])
+              AND em.connector_id = %s
+            ORDER BY em.id DESC
+            LIMIT 1
+            """,
+            (list(external_ids), connector_id),
+        )
+        return rows[0]["chat_id"] if rows else None
 
     @hybridmethod
     async def create_link(

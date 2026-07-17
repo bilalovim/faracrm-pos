@@ -300,6 +300,33 @@ async def __cron_task__():
             limit=1,
         )
 
+        if existing:
+            job = existing[0]
+            # Обновляем ТОЛЬКО определение задачи (код/метод/интервал + kwargs
+            # вроде priority), но НЕ рантайм-состояние. active и nextcall в
+            # payload НЕ кладём → они не попадают в assigned_fields → update их
+            # не трогает, и значение из БД сохраняется.
+            #
+            # Почему так. Раньше здесь был полный job.update со всеми полями,
+            # включая active/nextcall. post_init зовёт create_or_update на
+            # КАЖДОМ старте, поэтому включённый в UI крон выключался обратно на
+            # active=False (это была исходная жалоба «письма не приходят»).
+            # «Лечение» — закомментировать update целиком — остановило и
+            # легитимный апдейт: интервал/код существующей задачи не обновлялись
+            # (это ловит test_update_existing_job: interval остаётся 1 вместо 5).
+            # Точечное обновление определения чинит и то, и другое.
+            await job.update(
+                env.models.cron_job(
+                    code=code,
+                    model_name=model_name,
+                    method_name=method_name,
+                    interval_number=interval_number,
+                    interval_type=interval_type,
+                    **kwargs,
+                )
+            )
+            return job
+
         cron_job_new = CronJob(
             name=name,
             code=code,
@@ -311,11 +338,5 @@ async def __cron_task__():
             nextcall=datetime.now(timezone.utc),
             **kwargs,
         )
-        if existing:
-            ...
-            # job = existing[0]
-            # await job.update(cron_job_new)
-            # return job
-        else:
-            job = await env.models.cron_job.create(cron_job_new)
-            return job
+        job = await env.models.cron_job.create(cron_job_new)
+        return job

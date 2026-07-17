@@ -2,6 +2,7 @@
 # Chat module - base strategy pattern
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Tuple
 import json
 import logging
@@ -23,6 +24,61 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class IncomingRoute(str, Enum):
+    """
+    Судьба входящего сообщения — ВСЕ возможные исходы, по одному имени на исход.
+
+    Порядок принятия решения: ПЕРЕПИСКА → СВЯЗЬ → ХОЛОДНЫЙ СТАРТ.
+    Он важен: только переписка различает два наших чата с одним адресатом
+    (личный и групповой) — адрес у них общий. Не менять местами.
+    """
+
+    # Не поняли, КТО ИЗ ДВОИХ клиент: resolve_partner вернул (None, None).
+    #
+    # ЭТО НЕ «незнакомый отправитель» — незнакомый как раз обрабатывается и
+    # попадает в NEW_CHAT_NEW_PARTNER. Здесь мы не смогли определить
+    # контрагента ВООБЩЕ, и до создания контакта дело не доходит.
+    # Пример: Avito шлёт вебхук и на наши СОБСТВЕННЫЕ исходящие и не отличает
+    # нас от клиента в author_id — он лезет за участниками чата, и если не
+    # вышло, отдаёт пусто. Пропускаем, чтобы не завести партнёра и лид на наш
+    # же магазин.
+    SKIP_COUNTERPARTY_NOT_RESOLVED = "skip_counterparty_not_resolved"
+
+    # Сообщение само сказало, куда лечь: «я ответ вон на те». Только email.
+    ROUTED_BY_THREAD = "routed_by_thread"
+
+    # Адрес/тред уже привязан к чату (chat_external_chat). Основной путь.
+    ROUTED_BY_LINK = "routed_by_link"
+
+    # Переписки нет, контакта раньше не было → завели партнёра и его чат.
+    NEW_CHAT_NEW_PARTNER = "new_chat_new_partner"
+
+    # Переписки нет, но партнёр уже известен → открыли/нашли его чат.
+    NEW_CHAT_KNOWN_PARTNER = "new_chat_known_partner"
+
+    # Наш сотрудник написал на общий адрес, переписки с ним ещё нет. Класть
+    # некуда: адрес общий, конкретного чата он не выбрал. Партнёра и лида на
+    # сотрудника не заводим. Если МЫ написали первыми — сюда не дойдёт,
+    # сработает ROUTED_BY_THREAD/ROUTED_BY_LINK.
+    SKIP_OWN_USER = "skip_own_user"
+
+    # Контакт есть, но у него не заполнен ни партнёр, ни пользователь. XOR-
+    # констрейнта на модели нет, поэтому случай представим. Раньше здесь
+    # бросался ValueError — по решению владельца это тоже пропуск: одно битое
+    # сообщение не должно блокировать очередь коннектора.
+    SKIP_NO_PARTNER_NO_USER = "skip_no_partner_no_user"
+
+
+# Исходы, при которых чата нет и обрабатывать нечего.
+_SKIP_ROUTES = frozenset(
+    {
+        IncomingRoute.SKIP_COUNTERPARTY_NOT_RESOLVED,
+        IncomingRoute.SKIP_OWN_USER,
+        IncomingRoute.SKIP_NO_PARTNER_NO_USER,
+    }
+)
+
+
 class ChatStrategyBase(ABC):
     """
     Базовый класс стратегии для работы с внешними сервисами.
@@ -39,6 +95,29 @@ class ChatStrategyBase(ABC):
 
     # Уникальный тип стратегии (должен совпадать с connector.type)
     strategy_type: str = ""
+
+    # Умеет ли стратегия слать вложения ВНУТРИ сообщения (одним отправлением).
+    #
+    # False (дефолт) — база шлёт каждое вложение отдельным вызовом
+    # chat_send_message_binary. Для мессенджеров это верно: в Telegram/Avito
+    # файл — самостоятельное сообщение.
+    # True — база НЕ крутит цикл, а передаёт список в chat_send_message, и
+    # стратегия сама укладывает файлы в одно отправление. Так делает email:
+    # формат письма ровно для этого и придуман (multipart/mixed), а раньше
+    # «текст + 2 файла» уходило ТРЕМЯ письмами.
+    attachments_inline: bool = False
+
+    # Умеет ли канал нести в самом сообщении пометку «это ответ на такое-то».
+    #
+    # True только у email: письмо несёт её заголовком In-Reply-To, и почтовик
+    # получателя собирает переписку в одну ветку. У мессенджеров такого нет и
+    # не нужно — там тред задаёт платформа, а приложить свой заголовок к
+    # сообщению Telegram/Avito нельзя.
+    #
+    # НА МАРШРУТИЗАЦИЮ НЕ ВЛИЯЕТ: ответ клиента несёт In-Reply-To с нашим
+    # Message-ID в любом случае — его ставит почтовик клиента, а не мы. Этот
+    # флаг нужен только чтобы НАШИ письма не рассыпались у клиента в ящике.
+    supports_thread: bool = False
 
     # Нужен ли коннектору outbox-аккаунт (chat_external_account) для отправки.
     # Для большинства провайдеров (Telegram, Avito, WhatsApp) — да: исходящие
@@ -100,9 +179,17 @@ class ChatStrategyBase(ABC):
         body: str,
         chat_id: str | None = None,
         recipients_ids: list | None = None,
-    ) -> Tuple[str, str]:
+        thread_message_id: str | None = None,
+        attachments: list | None = None,
+    ):
         """
         Отправить текстовое сообщение.
+
+        Последние два параметра база передаёт ВСЕГДА, но заполняет только тем
+        стратегиям, которые это объявили (см. supports_thread и
+        attachments_inline). Остальные получают None и просто их игнорируют —
+        так интерфейс честно говорит, ЧТО конвейер умеет дать, а стратегия
+        берёт что нужно.
 
         Args:
             connector: Экземпляр коннектора
@@ -110,6 +197,12 @@ class ChatStrategyBase(ABC):
             body: Текст сообщения
             chat_id: ID внешнего чата (если известен)
             recipients_ids: Список получателей (если нет chat_id)
+            thread_message_id: внешний id предыдущего сообщения чата — чтобы пометить
+                исходящее ответом на него (у email → заголовок In-Reply-To).
+                Не None только при supports_thread.
+            attachments: файлы В ЭТО ЖЕ сообщение. Не None только при
+                attachments_inline; иначе они уже ушли отдельными вызовами
+                chat_send_message_binary.
 
         Returns:
             Tuple[external_message_id, external_chat_id]
@@ -145,6 +238,10 @@ class ChatStrategyBase(ABC):
     #         f"[{self.strategy_type}] chat_send_file not implemented"
     #     )
     #     return None
+
+    # ========================================================================
+    # Абстрактные методы (продолжение)
+    # ========================================================================
 
     @abstractmethod
     def create_message_adapter(
@@ -274,18 +371,17 @@ class ChatStrategyBase(ABC):
             await self.resolve_partner(connector, adapter)
         )
         if not counterparty_external_id:
-            # Не удалось определить клиента (например, наше сообщение, а
-            # второго участника достать не вышло) — пропускаем, чтобы не
-            # завести партнёра/лид на наш собственный аккаунт.
             logger.info(
-                "[%s] Cannot resolve counterparty for message %s — skip",
+                "[%s] Message %s → %s",
                 self.strategy_type,
                 adapter.message_id,
+                IncomingRoute.SKIP_COUNTERPARTY_NOT_RESOLVED.value,
             )
             return
 
-        # 1. Найти или создать ExternalAccount + Contact (+ Partner если новый)
-        external_account, contact, created = (
+        # 1. Контакт (+ партнёр, если адрес незнакомый). Первый элемент —
+        # ExternalAccount, он здесь не нужен.
+        _, contact, created = (
             await env.models.chat_external_account.find_or_create_for_webhook(
                 connector=connector,
                 external_id=counterparty_external_id,
@@ -295,30 +391,68 @@ class ChatStrategyBase(ABC):
             )
         )
 
-        if not contact.partner_id:
-            raise ValueError("Partner not found for contact")
-        partner_name = contact.partner_id.name
+        # Имя контрагента. Связываем ЗДЕСЬ и БЕЗУСЛОВНО: его читает блок
+        # WS-уведомления в самом конце (author_data), и на любом пути, где имя
+        # не связано, там был бы NameError. Контакт полиморфен — имя берём у
+        # того владельца, который есть.
+        counterparty_name = None
+        if contact.partner_id:
+            counterparty_name = contact.partner_id.name
+        elif contact.user_id:
+            counterparty_name = contact.user_id.name
 
-        # 2. Модель 1:1 — у партнёра ОДИН внешний групповой чат. Находим-или-
-        # создаём его ПО ПАРТНЁРУ (а не по внешнему треду). advisory-lock и
-        # штамп team_id/manager_ids — внутри get_or_create_partner_chat.
-        chat = await env.models.chat.get_or_create_partner_chat(
-            contact.partner_id.id,
-            connector=connector,
-            partner_name=partner_name,
-        )
-        chat_id = chat.id
-
-        # Внешний тред линкуем на этот же чат (many→one: несколько тредов/
-        # каналов одного партнёра → один чат). Резолвим по external_id ЛИБО
-        # address (write-first мог создать связь по номеру).
+        # Связь ищем ВСЕГДА, даже если чат определится перепиской: external_chat
+        # нужен лидогенерации ниже. По external_id ЛИБО address (write-first мог
+        # создать связь по номеру).
         external_chat = (
             await env.models.chat_external_chat.find_by_id_or_address(
                 key=adapter.chat_id,
                 connector_id=connector.id,
             )
         )
-        if not external_chat:
+
+        # 2. Куда класть сообщение: ПЕРЕПИСКА → СВЯЗЬ → ХОЛОДНЫЙ СТАРТ.
+        # Плоская цепочка: как только route назначен, следующие ветки молчат.
+        # Порядок важен — только переписка различает два наших чата с одним
+        # адресатом (личный и групповой). Не менять местами.
+        route = None
+        chat_id = None
+
+        # Переписка: сообщение само сказало «я ответ вон на те». Только email —
+        # у прочих адаптеров thread_message_ids пуст по дефолту.
+        if adapter.thread_message_ids:
+            chat_id = (
+                await env.models.chat_external_message.thread_incoming_chat(
+                    external_ids=adapter.thread_message_ids,
+                    connector_id=connector.id,
+                )
+            )
+            if chat_id:
+                route = IncomingRoute.ROUTED_BY_THREAD
+
+        # Связь: тред уже привязан к чату.
+        if route is None and external_chat and external_chat.chat_id:
+            chat_id = (
+                external_chat.chat_id.id
+                if hasattr(external_chat.chat_id, "id")
+                else external_chat.chat_id
+            )
+            route = IncomingRoute.ROUTED_BY_LINK
+
+        # Холодный старт с клиентом: его единственный внешний чат (модель 1:1),
+        # и сразу привязываем к нему тред.
+        if route is None and contact.partner_id:
+            chat = await env.models.chat.get_or_create_partner_chat(
+                contact.partner_id.id,
+                connector=connector,
+                partner_name=counterparty_name,
+            )
+            chat_id = chat.id
+            route = (
+                IncomingRoute.NEW_CHAT_NEW_PARTNER
+                if created
+                else IncomingRoute.NEW_CHAT_KNOWN_PARTNER
+            )
             item_title, item_url = await self._fetch_item_info(
                 connector, adapter
             )
@@ -335,6 +469,27 @@ class ChatStrategyBase(ABC):
                     connector_id=connector.id,
                 )
             )
+
+        # Ни то ни другое — класть некуда, см. комменты у членов IncomingRoute.
+        if route is None:
+            route = (
+                IncomingRoute.SKIP_OWN_USER
+                if contact.user_id
+                else IncomingRoute.SKIP_NO_PARTNER_NO_USER
+            )
+
+        # Одна строка на исход — по ней видно судьбу ЛЮБОГО сообщения.
+        logger.info(
+            "[%s] Message %s → %s (chat=%s, contact=%s)",
+            self.strategy_type,
+            adapter.message_id,
+            route.value,
+            chat_id,
+            contact.id,
+        )
+
+        if route in _SKIP_ROUTES:
+            return
 
         # Лидогенерация — ДО создания сообщения, чтобы сразу проставить
         # message.lead_id (тег «ленты» лида). Лид резолвится по клиенту-
@@ -419,7 +574,7 @@ class ChatStrategyBase(ABC):
         # даром (contact.partner_id), поэтому кладём оба тега.
         author_data = {
             "id": author_user_id or author_partner_id,
-            "name": partner_name or adapter.author_name,
+            "name": counterparty_name or adapter.author_name,
             "type": "user" if author_user_id else "partner",
         }
 
@@ -999,8 +1154,24 @@ class ChatStrategyBase(ABC):
             if outbox or not self.requires_outbox_account:
                 external_msg_id = None
 
-                # Отправляем вложения
-                if attachments:
+                # Вложения внутри сообщения (email) или отдельными (мессенджеры)
+                inline = bool(attachments) and self.attachments_inline
+
+                # Пометка «это ответ на такое-то» для исходящего — только тем,
+                # кто умеет её нести. Берём ПОСЛЕДНЕЕ сообщение чата: этого
+                # хватает, чтобы почтовик получателя собрал переписку в ветку.
+                # На маршрутизацию не влияет, см. supports_thread.
+                thread_message_id = None
+                if self.supports_thread:
+                    thread_message_id = await env.models.chat_external_message.thread_outgoing_id(
+                        chat_id=chat_id,
+                        connector_id=connector_id.id,
+                    )
+
+                # Отправляем вложения ОТДЕЛЬНЫМИ сообщениями — только если
+                # стратегия не умеет иначе. У email умеет: там они уедут внутри
+                # письма ниже, одним отправлением.
+                if attachments and not inline:
                     for att in attachments:
                         try:
                             # Получаем содержимое вложения из БД
@@ -1018,25 +1189,34 @@ class ChatStrategyBase(ABC):
                                 external_msg_id = file_msg_id
 
                         except Exception as e:
+                            # att — объект Attachment (см. messages.py, там
+                            # собираются payload'ы модели), а не dict. Раньше
+                            # здесь стояло att.get("id") — обработчик ошибок сам
+                            # падал на первом же сбое отправки вложения.
                             logger.error(
                                 "Failed to send attachment %s: %s",
-                                att.get("id"),
+                                getattr(att, "id", None),
                                 e,
                             )
 
                 # Если нет вложений или есть текст без caption — отправляем текст.
+                # При inline зовём ДАЖЕ С ПУСТЫМ текстом: иначе письмо с одними
+                # файлами и без подписи не ушло бы вовсе — цикл выше пропущен, а
+                # отправляет именно этот вызов.
                 # Второй элемент — канонический ключ переписки, который вернула
                 # стратегия (для write-first это нормализованный адрес/номер;
                 # когда стратегия начнёт возвращать реальный chat_id из ответа —
                 # это будет он).
                 conversation_key = None
-                if body.strip():
+                if body.strip() or inline:
                     text_msg_id, conversation_key = (
                         await self.chat_send_message(
                             connector=connector_id,
                             user_from=outbox,
                             body=body,
                             chat_id=external_chat_id,
+                            thread_message_id=thread_message_id,
+                            attachments=attachments if inline else None,
                         )
                     )
                     if text_msg_id:
@@ -1062,13 +1242,10 @@ class ChatStrategyBase(ABC):
                 if is_write_first:
                     thread_key = str(conversation_key or write_first_address)
                     address_key = str(conversation_key or write_first_address)
-                    already = await env.models.chat_external_chat.search(
-                        filter=[
-                            ("chat_id", "=", chat_id),
-                            ("connector_id", "=", connector_id.id),
-                        ],
-                        fields=["id"],
-                        limit=1,
+                    # Идемпотентность — ПО АДРЕСУ, а не по chat_id.
+                    already = await env.models.chat_external_chat.find_by_id_or_address(
+                        key=address_key,
+                        connector_id=connector_id.id,
                     )
                     if not already:
                         await env.models.chat_external_chat.create_link(
@@ -1084,6 +1261,22 @@ class ChatStrategyBase(ABC):
                             connector_id.id,
                             address_key,
                         )
+                    else:
+                        # Связь на этот адрес уже есть и ведёт в другой чат —
+                        # НЕ дублируем: диалог принадлежит тому чату, и входящий
+                        # ответ уйдёт туда. Иначе получили бы два чата на адрес.
+                        linked_chat = already.chat_id
+                        if linked_chat != chat_id:
+                            logger.warning(
+                                "write-first: адрес %s уже привязан к чату %s "
+                                "(коннектор %s), отправка идёт из чата %s — "
+                                "ответ придёт в %s, связь не дублируем.",
+                                address_key,
+                                linked_chat,
+                                connector_id.id,
+                                chat_id,
+                                linked_chat,
+                            )
 
                 logger.info(
                     "Sent message to %s: internal=%s, external=%s",

@@ -176,7 +176,9 @@
       "auth": "Authorization",
       "crm": "CRM",
       "logs": "Logs",
-      "managers": "Managers"
+      "managers": "Managers",
+      "rules": "Rules",
+      "routing": "Routing rules"
     },
     "groups": {
       "routingRules": "Lead routing rules",
@@ -250,6 +252,56 @@
     },
     "email": {
       "noAuthRequired": "Email uses login and password for authorization. Configure it in the \"Connection\" tab."
+    },
+    "rules": {
+      "title": "How incoming messages are handled",
+      "summary": "If a message is a reply to ours, it lands in the chat we wrote from. Otherwise the chat is found by the sender address. If there is no conversation either — an unknown address becomes a client, and our own employee address is skipped.",
+      "note": "An employee is someone whose address is registered as a CRM user contact. A partner and a lead are never created for an employee. The connector address is shared, so an employee writing to it is not addressing anyone in particular — start the conversation from the CRM side.",
+      "noteThread": "\"By conversation\" works for email only: a letter carries a header marking what it replies to. Messengers have no such thing and do not need it — there is a single dialog per person, defined by the platform itself.",
+      "contactTypeHint": "Connector contact type:",
+      "contactTypeHint2": "— the incoming address is matched to a contact by it.",
+      "col": {
+        "event": "Event",
+        "by": "How the chat is found",
+        "target": "Where it lands",
+        "lead": "Partner / lead"
+      },
+      "by": {
+        "none": "—",
+        "thread": "by conversation",
+        "address": "by address"
+      },
+      "lead": {
+        "yes": "Partner and lead",
+        "no": "Nothing is created",
+        "byRules": "Per lead generation rules"
+      },
+      "rows": {
+        "newClient": {
+          "event": "Unknown address writes first",
+          "target": "A partner is created, their chat opens"
+        },
+        "clientReplies": {
+          "event": "Client replies to our letter",
+          "target": "The chat we wrote from"
+        },
+        "clientNew": {
+          "event": "Known sender writes anew, not a reply",
+          "target": "Their chat"
+        },
+        "weWriteClient": {
+          "event": "Operator writes to a client first",
+          "target": "The reply lands in this same chat"
+        },
+        "staffCold": {
+          "event": "Employee writes to the shared address, no conversation yet",
+          "target": "Nothing happens — the message is skipped"
+        },
+        "staffReplies": {
+          "event": "We wrote to the employee, they replied",
+          "target": "The chat we wrote from — even if there are several chats with them"
+        }
+      }
     }
   },
   "member": {

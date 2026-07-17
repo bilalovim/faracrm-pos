@@ -16,8 +16,14 @@ import {
   IconWebhook,
   IconUsers,
   IconFilter,
+  IconBook,
 } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+// Импорт ради side-effect: registerExtension на модульном уровне наполняет
+// реестр ДО рендера формы. Вкладка «Правила работы» общая для всех типов, а
+// значит регистрируется здесь, а не в per-type fara_chat_* (те гейтятся по
+// form.values.type и показали бы её только своему коннектору).
+import './ConnectorRulesTab';
 
 /**
  * Базовая форма коннектора чата.
@@ -66,6 +72,20 @@ export function ConnectorForm(props: ViewFormProps) {
           name="connection"
           label={t('connector.tabs.connection')}
           icon={<IconLink size={16} />}>
+          {/* Контент добавляется через расширения */}
+        </FormTab>
+
+        {/* Правила работы — справка, одинаковая для всех типов коннекторов.
+            Тело ПУСТОЕ намеренно: контент приходит расширением
+            ConnectorRulesTab. Написать <Table>/<Alert> прямо здесь нельзя —
+            Form пересобирает детей через getComponentsFromChildren
+            (components/Form/utils.tsx), который принимает только layout-
+            компоненты из белого списка и <Field> с известным серверу именем;
+            ветки else нет, всё остальное молча выбрасывается. */}
+        <FormTab
+          name="rules"
+          label={t('connector.tabs.rules', 'Правила работы')}
+          icon={<IconBook size={16} />}>
           {/* Контент добавляется через расширения */}
         </FormTab>
 

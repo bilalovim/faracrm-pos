@@ -414,8 +414,25 @@ class EmailMessageAdapter(ChatMessageAdapter):
         return None
 
     @property
+    def thread_message_ids(self) -> list[str]:
+        """
+        ID писем этой переписки, которые несёт входящее (см. базовый адаптер).
+
+        Собирается из двух заголовков: References — вся цепочка, In-Reply-To —
+        письмо, на которое отвечают напрямую. Берём оба и объединяем: клиент
+        или релей может срезать один из них, и тогда сработает второй.
+
+        Порядок неважен — ищем по совпадению с ЛЮБЫМ из них.
+        """
+        ids = list(self.references)
+        parent = self.in_reply_to
+        if parent and parent not in ids:
+            ids.append(parent)
+        return ids
+
+    @property
     def in_reply_to(self) -> str | None:
-        """Message-ID письма на которое это ответ."""
+        """Message-ID письма на которое это ответ (заголовок In-Reply-To)."""
         if self._is_webhook:
             return self.raw.get("In-Reply-To")
 

@@ -37,12 +37,18 @@ async def run_job_now(req: Request, job_id: int):
     """
     env: "Environment" = req.app.state.env
 
-    # Используем worker если запущен
-    cron_app = env.apps.cron
-    if cron_app.worker:
-        return await cron_app.run_job_now(job_id)
-
-    # Fallback: выполняем напрямую
+    # Выполняем задачу прямо в этом процессе.
+    #
+    # Раньше здесь была ветка `if cron_app.worker: return await
+    # cron_app.run_job_now(job_id)` — осколок архитектуры до v2.0.0, когда cron
+    # крутился in-process. Сейчас CronApp запускает его отдельным subprocess
+    # (_spawn_cron), атрибута `worker` у него нет и никто его не присваивает,
+    # поэтому строка роняла AttributeError на КАЖДОМ вызове этой ручки.
+    # CronWorker из worker.py к CronApp не подключён и не импортируется нигде.
+    #
+    # Ручной запуск сознательно идёт мимо subprocess: он должен отработать
+    # синхронно и вернуть результат в HTTP-ответ. job.execute() сам ставит
+    # SystemSession, так что security-проверки DotORM проходят.
     try:
         job = await env.models.cron_job.get(job_id)
     except Exception:

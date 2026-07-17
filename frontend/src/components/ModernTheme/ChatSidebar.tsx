@@ -133,9 +133,20 @@ export function ChatSidebar() {
   });
   const [deleteBulk] = useDeleteBulkMutation();
 
-  // Непрочитанные по папкам — считаются на бэке на лету (как счётчик вверху
-  // справа), ничего не храним. { "<folder_id>": count } только для count>0.
-  const { data: unreadData } = useGetFolderUnreadQuery();
+  // Непрочитанные по папкам — считаются на бэке на лету. { "<folder_id>": count }
+  // только для count>0.
+  //
+  // refetchOnMountOrArgChange ОБЯЗАТЕЛЕН, иначе счётчики папок отставали от
+  // верхнего бабла. Причина в разнице механизмов: верхний бабл читает getChats
+  // и патчится хирургически (updateQueryData на каждом WS-событии, подписчик не
+  // нужен), а этот запрос обновляется через инвалидацию тега FOLDER_UNREAD →
+  // refetch, который срабатывает ТОЛЬКО при активной подписке. Пока входящие
+  // шли кроном, а сайдбар был не смонтирован, инвалидация «сгорала» без
+  // подписчика; при возврате в пределах keepUnusedDataFor (30с) RTK отдавал
+  // устаревший кэш без перезапроса. Флаг форсит свежий счёт на каждый монтаж.
+  const { data: unreadData } = useGetFolderUnreadQuery(undefined, {
+    refetchOnMountOrArgChange: true,
+  });
   const unreadByFolder = unreadData?.data || {};
 
   const [modalOpen, setModalOpen] = useState(false);

@@ -52,6 +52,56 @@ def parse_email_body(body: str | None) -> tuple[str | None, str]:
     return None, body
 
 
+_FETCH_MESSAGE_DATA_RE = re.compile(rb"[0-9]+ FETCH \(")
+_UID_RE = re.compile(rb"\bUID\s+(\d+)")
+
+
+def parse_fetch_response(lines: list) -> dict[int, bytes]:
+    """
+    Разобрать ответ IMAP FETCH в {uid: сырое письмо}.
+
+    aioimaplib кладёт IMAP-литерал (синтаксис {N}) в Response.lines как
+    bytearray, а любую другую строку ответа — как bytes. bytearray НЕ является
+    подклассом bytes, поэтому типы не пересекаются, и проверка типа —
+    точный признак «это тело письма», а не эвристика: на этом же различии
+    стоит и сам aioimaplib (FetchCommand.wait_data фильтрует isinstance bytes,
+    чтобы исключить тела из подсчёта скобок).
+
+    Порога по длине не существует в принципе: строка-заголовок сверху не
+    ограничена (BODYSTRUCTURE у multipart — сотни байт в одну строку), а
+    литерал снизу не ограничен (`{0}` — легальное пустое тело). Диапазоны
+    пересекаются, поэтому любое сравнение с константой ошибочно.
+
+    Литерал всегда идёт сразу за своей строкой-заголовком `N FETCH (...`,
+    поэтому UID берём из заголовка и связываем со СЛЕДУЮЩИМ элементом. Это
+    корректно и для ответа сразу на несколько писем, где заголовки и тела
+    чередуются в одном плоском списке.
+
+    ВАЖНО: парность заголовок↔литерал верна, пока запрашивается ровно
+    "(UID BODY.PEEK[])" — UID литералом не бывает, поэтому на письмо
+    приходится строго один литерал. Добавление ENVELOPE / BODYSTRUCTURE /
+    RFC822.HEADER / второй секции BODY[...] даст лишние литералы и сломает
+    привязку.
+    """
+    result: dict[int, bytes] = {}
+
+    for index, line in enumerate(lines):
+        if not isinstance(line, bytes):
+            continue
+        if not _FETCH_MESSAGE_DATA_RE.match(line):
+            continue
+
+        match = _UID_RE.search(line)
+        if not match:
+            continue
+
+        # Тело — только литерал, идущий непосредственно следом.
+        if index + 1 < len(lines) and isinstance(lines[index + 1], bytearray):
+            result[int(match.group(1))] = bytes(lines[index + 1])
+
+    return result
+
+
 class EmailStrategy(ChatStrategyBase):
     """
     Стратегия для интеграции с Email через SMTP/IMAP.
@@ -73,6 +123,22 @@ class EmailStrategy(ChatStrategyBase):
 
     strategy_type = "email"
     TIMEOUT = 30
+
+    # Вложения уезжают ВНУТРИ письма, а не отдельными сообщениями.
+    #
+    # База по умолчанию шлёт каждое вложение своим вызовом
+    # chat_send_message_binary, и для мессенджеров это верно: в Telegram файл —
+    # самостоятельное сообщение. Для почты — нет: «текст + 2 файла» уходило
+    # ТРЕМЯ письмами, хотя формат ровно для этого и придуман (multipart/mixed).
+    # С этим флагом база не крутит цикл, а отдаёт вложения в chat_send_message,
+    # и получатель видит ОДНО письмо с прикреплёнными файлами.
+    attachments_inline = True
+
+    # Письмо умеет нести пометку «это ответ на такое-то» (заголовок
+    # In-Reply-To) — почтовик получателя собирает переписку в одну ветку.
+    # На маршрутизацию не влияет: ответ клиента вернёт нам наш Message-ID в
+    # любом случае, его ставит почтовик клиента.
+    supports_thread = True
 
     # Email адресуется своими полями (email_from/email_username), внешний
     # outbox-аккаунт ему не нужен. Без этого флага send_outgoing_message
@@ -245,6 +311,51 @@ class EmailStrategy(ChatStrategyBase):
             )
             return {"ok": False, "error": str(e)}
 
+    @staticmethod
+    def _build_attachment_part(attachment: "Attachment"):
+        """
+        Собрать MIME-часть из вложения. None — если содержимого нет.
+
+        Общая для обоих путей отправки: письмо с файлами (chat_send_message) и
+        легаси-путь по одному файлу (chat_send_message_binary).
+        """
+        file_content = attachment.content
+        if not file_content:
+            return None
+
+        file_name = attachment.name or "attachment"
+        mimetype = attachment.mimetype or "application/octet-stream"
+        maintype, subtype = (
+            mimetype.split("/", 1)
+            if "/" in mimetype
+            else ("application", "octet-stream")
+        )
+        part = MIMEBase(maintype, subtype)
+        part.set_payload(file_content)
+        encoders.encode_base64(part)
+        part.add_header(
+            "Content-Disposition",
+            "attachment",
+            filename=file_name,
+        )
+        return part
+
+    @staticmethod
+    def _apply_thread_headers(msg, thread_message_id: str | None) -> None:
+        """
+        Пометить исходящее письмо ответом на последнее письмо этого чата.
+
+        Зачем ТОЛЬКО это: почтовик получателя соберёт переписку в одну ветку —
+        без заголовка каждое наше письмо висит у него в ящике отдельным.
+
+        НА МАРШРУТИЗАЦИЮ НЕ ВЛИЯЕТ. Ответ клиента принесёт наш Message-ID в
+        своём In-Reply-To независимо от того, ставим мы что-то или нет: его
+        подставляет почтовик клиента. Поэтому достаточно одного id (последнего)
+        и не нужен ни References, ни цепочка предков.
+        """
+        if thread_message_id:
+            msg["In-Reply-To"] = thread_message_id
+
     async def chat_send_message(
         self,
         connector: "ChatConnector",
@@ -252,9 +363,11 @@ class EmailStrategy(ChatStrategyBase):
         body: str,
         chat_id: str | None = None,
         recipients_ids: list | None = None,
+        thread_message_id: str | None = None,
+        attachments: list["Attachment"] | None = None,
     ) -> Tuple[str, str]:
         """
-        Отправить email сообщение через SMTP.
+        Отправить email сообщение через SMTP — ОДНИМ письмом с вложениями.
 
         Args:
             connector: Коннектор Email
@@ -262,6 +375,10 @@ class EmailStrategy(ChatStrategyBase):
             body: email-формат {"subject","html"} (парсится ниже)
             chat_id: Email получателя (используется как chat_id)
             recipients_ids: Список email получателей
+            thread_message_id: Message-ID последнего письма чата — уезжает в
+                In-Reply-To, чтобы почтовик получателя собрал ветку.
+            attachments: файлы В ЭТО ЖЕ письмо (см. attachments_inline).
+                База отдаёт их сюда вместо цикла по chat_send_message_binary.
 
         Returns:
             Tuple[message_id, recipient_email]
@@ -296,8 +413,31 @@ class EmailStrategy(ChatStrategyBase):
         if not recipients:
             raise ValueError("No recipients specified for email")
 
-        # Создаём сообщение
-        msg = MIMEMultipart("alternative")
+        # Тело: plain + html как ВЗАИМОЗАМЕНЯЕМЫЕ версии одного текста —
+        # multipart/alternative, почтовик показывает ту, что умеет.
+        alternative = MIMEMultipart("alternative")
+        plain_text = re.sub(r"<[^>]+>", "", html)
+        alternative.attach(MIMEText(plain_text, "plain", "utf-8"))
+
+        # Если html содержит теги, добавляем HTML версию
+        if "<" in html and ">" in html:
+            alternative.attach(MIMEText(html, "html", "utf-8"))
+
+        if attachments:
+            # Файлы — ДОПОЛНЕНИЕ к телу, а не альтернатива ему, поэтому
+            # multipart/mixed снаружи: [тело, файл, файл]. Вкладывать их в
+            # alternative нельзя — почтовик счёл бы их версиями текста.
+            msg = MIMEMultipart("mixed")
+            msg.attach(alternative)
+            for att in attachments:
+                part = self._build_attachment_part(att)
+                if part is not None:
+                    msg.attach(part)
+        else:
+            msg = alternative
+
+        # Заголовки — на ВНЕШНЕМ контейнере (иначе уедут внутрь mixed и почтовик
+        # их не увидит).
         # Subject: тема из body-формата (задаётся в виджете письма, дефолт —
         # имя чата) → email_default_subject коннектора → заглушка.
         msg["Subject"] = (
@@ -315,18 +455,23 @@ class EmailStrategy(ChatStrategyBase):
         # Return-Path для bounce tracking
         msg["Return-Path"] = connector.email_bounce or email_from
 
-        # Добавляем текстовую и HTML версии (html из body-формата)
-        plain_text = re.sub(r"<[^>]+>", "", html)
-        msg.attach(MIMEText(plain_text, "plain", "utf-8"))
-
-        # Если html содержит теги, добавляем HTML версию
-        if "<" in html and ">" in html:
-            msg.attach(MIMEText(html, "html", "utf-8"))
-
-        # Генерируем Message-ID
+        # Генерируем Message-ID.
+        # ЭТО И ЕСТЬ КЛЮЧ МАРШРУТИЗАЦИИ ОТВЕТА: он сохраняется в
+        # chat_external_message.external_id (create_link в send_outgoing_message)
+        # вместе со ссылкой на внутреннее сообщение, а то знает свой чат. Когда
+        # получатель ответит, его In-Reply-To вернёт нам этот же id → находим чат.
+        #
+        # uuid4 здесь НЕ косметика: ключ должен быть непредсказуемым. Если
+        # закодировать сюда chat_id, ключ станет перечислимым — любой смог бы
+        # подобрать In-Reply-To и вписаться в чужой чат. (У Odoo в Message-ID
+        # есть строка вида -openerp-42-crm.lead, но она инертна: инбаунд её не
+        # парсит.) Не кодировать сюда ничего осмысленного.
         domain = email_from.split("@")[1] if "@" in email_from else "localhost"
         message_id = f"<{uuid.uuid4().hex}.{int(time.time())}@{domain}>"
         msg["Message-ID"] = message_id
+
+        # Цепочка: сшивает ветку у получателя и возвращается к нам в его ответе.
+        self._apply_thread_headers(msg, thread_message_id)
 
         # Отправляем
         try:
@@ -358,9 +503,17 @@ class EmailStrategy(ChatStrategyBase):
         chat_id: str,
         attachment: "Attachment",
         recipients_ids: list | None = None,
+        thread_message_id: str | None = None,
     ) -> Tuple[str, str]:
         """
         Отправить email с вложением.
+
+        ВНИМАНИЕ: база (send_outgoing_message) зовёт этот метод ОТДЕЛЬНО НА
+        КАЖДОЕ вложение, а текст уходит ещё одним письмом. То есть «текст + 2
+        файла» = 3 письма. Для мессенджеров это верно (там файл — отдельное
+        сообщение), для почты — нет: нормой было бы одно письмо с вложениями.
+        Пока это не переделано, thread_message_id хотя бы сшивает их в ОДНУ
+        ВЕТКУ у получателя, а не рассыпает по ящику.
         """
         smtp_host = connector.smtp_host
         smtp_port = connector.smtp_port or 587
@@ -415,10 +568,15 @@ class EmailStrategy(ChatStrategyBase):
             )
             msg.attach(part)
 
-        # Генерируем Message-ID
+        # Генерируем Message-ID — он же ключ маршрутизации ответа, см. коммент
+        # в chat_send_message. Ничего осмысленного внутрь не кодируем.
         domain = email_from.split("@")[1] if "@" in email_from else "localhost"
         message_id = f"<{uuid.uuid4().hex}.{int(time.time())}@{domain}>"
         msg["Message-ID"] = message_id
+
+        # Цепочка — та же, что у текстового письма этого же сообщения: письма
+        # получаются разными, но ветка у получателя одна.
+        self._apply_thread_headers(msg, thread_message_id)
 
         # Отправляем
         try:
@@ -456,13 +614,22 @@ class EmailStrategy(ChatStrategyBase):
 
         Используется для cron job.
 
+        ВАЖНО: watermark (connector.imap_last_uid) здесь НЕ двигается — это
+        делает cron_fetch_emails ПОСЛЕ успешной обработки каждого письма.
+        Раньше он персистился прямо здесь, сразу после удачного FETCH, и любое
+        падение обработки (например ValueError в _process_incoming_message)
+        теряло письмо НАВСЕГДА: watermark уже уехал, а на следующем опросе
+        "UID <uid+1>:*" по правилу n:* вернёт то же письмо, и фильтр
+        u > last_uid его отсечёт. Загрузить письмо и обработать письмо — разные
+        события, и отмечать прогресс можно только по второму.
+
         Args:
             connector: Email коннектор
             env: Environment
             max_messages: Максимальное число сообщений за раз (по умолчанию 50)
 
         Returns:
-            Список сообщений для обработки
+            Список сообщений (uid по возрастанию) для обработки
         """
         imap_host = connector.imap_host
         imap_port = connector.imap_port or 993
@@ -475,7 +642,6 @@ class EmailStrategy(ChatStrategyBase):
             return []
 
         messages = []
-        new_max_uid = last_uid
 
         try:
             # Увеличиваем таймаут для больших писем
@@ -522,33 +688,31 @@ class EmailStrategy(ChatStrategyBase):
                 await imap.logout()
                 return []
 
-            # Последующие запуски: получаем только новые письма
-            # Используем IMAP search с критерием UID
+            # Последующие запуски: получаем только новые письма.
+            # UID SEARCH, а не SEARCH: возвращает UID'ы вместо порядковых
+            # номеров, поэтому дальше адресуемся по UID и не зависим от
+            # перенумерации при EXPUNGE. RFC 3501 §7.4.1 запрещает серверу
+            # слать EXPUNGE во время SEARCH/FETCH, но UID-команды этой гарантии
+            # не требуют — им она и не нужна.
+            # charset=None: CHARSET необязателен (RFC 3501 §6.4.4), а часть
+            # серверов отвечает NO на "SEARCH CHARSET utf-8".
             search_criteria = f"UID {last_uid + 1}:*"
             logger.info("IMAP searching with criteria: %s", search_criteria)
-            response = await imap.search(search_criteria)
+            response = await imap.uid_search(search_criteria, charset=None)
             logger.info(
                 "IMAP search response: result=%s, lines=%s",
                 response.result,
                 response.lines,
             )
 
-            # if response.result != "OK":
-            #     # Если не поддерживается UID критерий - fallback на ALL
-            #     logger.warning(f"IMAP search UID failed, trying ALL")
-            #     response = await imap.search("ALL")
-            #     logger.info(
-            #         f"IMAP search ALL response: result={response.result}, lines={response.lines}"
-            #     )
+            if response.result != "OK":
+                logger.error("IMAP UID SEARCH failed: %s", response)
+                await imap.logout()
+                return []
 
-            # if response.result != "OK":
-            #     logger.error(f"IMAP search failed: {response}")
-            #     await imap.logout()
-            #     return []
-
-            # Парсим sequence numbers
+            # Парсим UID'ы
             # Ответ в формате [b'123 456 789', b'SEARCH completed (Success)']
-            seq_str = ""
+            uid_str = ""
             for line in response.lines:
                 logger.debug("Response line: %s = %s", type(line), line)
                 if isinstance(line, bytes):
@@ -560,90 +724,67 @@ class EmailStrategy(ChatStrategyBase):
                     and "SEARCH" not in line
                     and "completed" not in line.lower()
                 ):
-                    seq_str = line
+                    uid_str = line
                     break
 
-            logger.info("Parsed seq_str: '%s'", seq_str)
-            seq_list = seq_str.strip().split() if seq_str else []
-            logger.info("Parsed seq_list: %s", seq_list)
+            logger.info("Parsed uid_str: '%s'", uid_str)
 
-            if not seq_list:
+            try:
+                uid_list = [int(u) for u in uid_str.split()]
+            except ValueError:
+                logger.error("Unexpected UID SEARCH payload: %r", uid_str)
+                await imap.logout()
+                return []
+
+            # RFC 3501 §6.4.8: диапазон с '*' ("UID n:*") ВСЕГДА матчит хотя бы
+            # одно письмо — с максимальным UID, даже если тот меньше n. Поэтому
+            # отсекаем уже известные UID'ы ДО фетча: иначе каждый холостой опрос
+            # тянет тело письма целиком по сети и тут же его выбрасывает.
+            uid_list = sorted(u for u in uid_list if u > last_uid)
+            logger.info("Parsed uid_list (new only): %s", uid_list)
+
+            if not uid_list:
                 logger.info("No new messages found (last_uid=%s)", last_uid)
                 await imap.logout()
                 return []
 
             # Ограничиваем количество
-            if len(seq_list) > max_messages:
-                seq_list = seq_list[:max_messages]
+            if len(uid_list) > max_messages:
+                uid_list = uid_list[:max_messages]
 
-            logger.info("Found %s new messages to process", len(seq_list))
+            logger.info("Found %s new messages to process", len(uid_list))
 
-            import re
-
-            for seq in seq_list:
+            for uid_int in uid_list:
                 try:
-                    # Получаем UID и тело письма одним запросом
-                    fetch_response = await imap.fetch(seq, "(UID BODY.PEEK[])")
+                    # UID FETCH: адресуемся по UID, а не по порядковому номеру.
+                    # Спека "(UID BODY.PEEK[])" — ровно один литерал на письмо,
+                    # см. требование в parse_fetch_response.
+                    fetch_response = await imap.uid(
+                        "fetch", str(uid_int), "(UID BODY.PEEK[])"
+                    )
                     logger.debug(
                         "IMAP fetch response: %s, lines count: %s",
                         fetch_response.result,
                         len(fetch_response.lines),
                     )
 
-                    if (
-                        fetch_response.result != "OK"
-                        or not fetch_response.lines
-                    ):
-                        continue
+                    if fetch_response.result != "OK":
+                        logger.warning(
+                            "IMAP UID FETCH %s failed: %s",
+                            uid_int,
+                            fetch_response,
+                        )
+                        break
 
-                    # Парсим UID и тело из ответа
-                    # Формат: [b'123 FETCH (UID 456 BODY[] {size}', <bytearray>, b')', b'Success']
-                    uid_int = None
-                    raw_email = None
-
-                    for line in fetch_response.lines:
-                        if isinstance(line, (bytearray, bytes)):
-                            if isinstance(line, bytearray) or (
-                                isinstance(line, bytes) and len(line) > 200
-                            ):
-                                # Это тело письма
-                                raw_email = (
-                                    bytes(line)
-                                    if isinstance(line, bytearray)
-                                    else line
-                                )
-                            elif isinstance(line, bytes):
-                                # Может быть строка с UID
-                                decoded = line.decode(errors="ignore")
-                                if "UID" in decoded:
-                                    match = re.search(r"UID\s+(\d+)", decoded)
-                                    if match:
-                                        uid_int = int(match.group(1))
-                        elif isinstance(line, str) and "UID" in line:
-                            match = re.search(r"UID\s+(\d+)", line)
-                            if match:
-                                uid_int = int(match.group(1))
-
-                    logger.debug(
-                        "Parsed: uid=%s, has_body=%s",
-                        uid_int,
-                        raw_email is not None,
+                    raw_email = parse_fetch_response(fetch_response.lines).get(
+                        uid_int
                     )
 
-                    if not uid_int or uid_int <= last_uid:
-                        logger.debug(
-                            "Skipping seq=%s, uid=%s, last_uid=%s",
-                            seq,
-                            uid_int,
-                            last_uid,
-                        )
-                        continue
-
-                    if not raw_email:
-                        logger.warning(
-                            "No body found for seq=%s, uid=%s", seq, uid_int
-                        )
-                        continue
+                    if raw_email is None:
+                        # Письмо удалено между SEARCH и FETCH, либо сервер
+                        # ответил без message data.
+                        logger.warning("No body found for uid=%s", uid_int)
+                        break
 
                     # Парсим письмо
                     email_message = message_from_bytes(raw_email)
@@ -657,20 +798,15 @@ class EmailStrategy(ChatStrategyBase):
                     )
                     logger.info("Successfully fetched email uid=%s", uid_int)
 
-                    if uid_int > new_max_uid:
-                        new_max_uid = uid_int
-
                 except Exception as e:
-                    logger.error("Error fetching seq=%s: %s", seq, e)
-                    continue
+                    # Рвём цикл, а не continue: письма отдаём вызывающему
+                    # НЕПРЕРЫВНОЙ чередой по возрастанию uid, чтобы он мог
+                    # двигать watermark по последнему успешно ОБРАБОТАННОМУ.
+                    # При continue дырка в середине была бы не видна.
+                    logger.error("Error fetching uid=%s: %s", uid_int, e)
+                    break
 
             await imap.logout()
-
-            # Обновляем last_uid в коннекторе
-            if new_max_uid > last_uid:
-                await connector.update(
-                    type(connector)(imap_last_uid=new_max_uid)
-                )
 
             logger.info("Email fetched %s new messages", len(messages))
             return messages
@@ -747,11 +883,19 @@ class EmailStrategy(ChatStrategyBase):
                     )
                     continue
 
-                # Получаем новые письма
+                # Получаем новые письма — непрерывной чередой по возрастанию uid
                 messages = await strategy.fetch_emails(connector, env)
 
                 if not messages:
                     continue
+
+                # Watermark двигаем ТОЛЬКО по последнему успешно ОБРАБОТАННОМУ
+                # письму и только по непрерывной череде: первое же падение
+                # обрывает цикл, чтобы сбойное письмо перезапросилось на
+                # следующем опросе, а не потерялось навсегда. Раньше watermark
+                # персистился в fetch_emails сразу после загрузки — и любая
+                # ошибка обработки съедала письмо (так пропало uid=3239).
+                last_ok_uid = None
 
                 # Обрабатываем каждое письмо
                 for msg in messages:
@@ -774,6 +918,8 @@ class EmailStrategy(ChatStrategyBase):
                                 "Duplicate email %s, skipping",
                                 adapter.message_id,
                             )
+                            # Уже обработано раньше — череда не рвётся.
+                            last_ok_uid = msg["uid"]
                             continue
 
                         # Обрабатываем сообщение в транзакции
@@ -783,12 +929,50 @@ class EmailStrategy(ChatStrategyBase):
                             )
 
                         processed += 1
+                        last_ok_uid = msg["uid"]
 
                     except Exception as e:
-                        logger.error(
-                            "Error processing email: %s", e, exc_info=True
-                        )
                         errors += 1
+                        # НЕ continue: иначе следующее успешное письмо сдвинет
+                        # watermark за это, и оно не вернётся уже никогда.
+                        #
+                        # РАЗМЕН, о котором надо знать: письмо, падающее
+                        # ПОСТОЯННО, блокирует всю последующую почту этого
+                        # коннектора (head-of-line blocking) — пока причина не
+                        # устранена, письма за ним не доставятся. Это выбрано
+                        # сознательно: блокировка громкая и обратимая, а прежняя
+                        # тихая потеря — нет. Поэтому лог ERROR явно говорит,
+                        # что очередь встала, и называет uid.
+                        # TODO: ограниченные ретраи + dead-letter (нужна колонка
+                        # со счётчиком попыток), чтобы «ядовитое» письмо
+                        # пропускалось после N неудач с алертом.
+                        logger.error(
+                            "Email queue BLOCKED at uid=%s (connector %s): %s. "
+                            "Письма с бОльшим uid не будут обработаны, пока "
+                            "это не починено. Watermark остаётся на uid=%s.",
+                            msg.get("uid"),
+                            connector.id,
+                            e,
+                            (
+                                last_ok_uid
+                                if last_ok_uid is not None
+                                else (connector.imap_last_uid or 1)
+                            ),
+                            exc_info=True,
+                        )
+                        break
+
+                if last_ok_uid is not None and last_ok_uid > (
+                    connector.imap_last_uid or 1
+                ):
+                    await connector.update(
+                        type(connector)(imap_last_uid=last_ok_uid)
+                    )
+                    logger.info(
+                        "Email watermark advanced to uid=%s (connector %s)",
+                        last_ok_uid,
+                        connector.id,
+                    )
 
             except Exception as e:
                 logger.error(

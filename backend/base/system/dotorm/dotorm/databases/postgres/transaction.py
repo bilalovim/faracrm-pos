@@ -32,6 +32,37 @@ class ContainerTransaction:
     Автоматически устанавливает текущую сессию в contextvars,
     так что методы ORM могут использовать её без явной передачи.
 
+    ВЛОЖЕННОСТЬ (transaction propagation = REQUIRED).
+    Если транзакция уже открыта в этом контексте, НЕ берём второе соединение из
+    пула, а вкладываемся в существующее: asyncpg на вложенный
+    connection.transaction() выпускает SAVEPOINT.
+
+    Раньше __aenter__ безусловно делал pool.acquire() + transaction.start(), и
+    вложенный `async with get_transaction()` открывал ВТОРУЮ ПАРАЛЛЕЛЬНУЮ
+    транзакцию на ДРУГОМ соединении. Она не видела незакоммиченных данных
+    внешней, поэтому любой код вида
+
+        async with get_transaction():          # внешняя, conn A
+            partner = await create_partner()   # INSERT в A, не закоммичен
+            await get_or_create_partner_chat() # внутри — своя TX на conn B
+                                               # -> INSERT chat_member(partner)
+                                               # -> ForeignKeyViolationError:
+                                               #    "Ключ (partner_id)=(1)
+                                               #     отсутствует в partners"
+
+    падал на ровном месте. Воспроизведено на живой БД: conn B действительно не
+    видит партнёра, созданного в незакоммиченной TX conn A. Так ломался приём
+    первого письма от неизвестного адреса (создание партнёра и чата — в одной
+    внешней транзакции крона).
+
+    Побочно чинится и риск дедлока: вложенный acquire брал второе соединение,
+    удерживая первое, и при исчерпанном пуле вставал намертво.
+
+    Семантика после фикса:
+      - внутренний commit   -> RELEASE SAVEPOINT (внешняя жива, решает она);
+      - внутренний rollback -> ROLLBACK TO SAVEPOINT (внешняя цела);
+      - откат внешней       -> откатывает и вложенные (как и должно быть).
+
     Example:
         async with ContainerTransaction(pool) as session:
             await session.execute("INSERT INTO users ...")
@@ -50,9 +81,22 @@ class ContainerTransaction:
         else:
             self.pool = pool
         self._token = None
+        # Взяли ли соединение из пула сами (значит, нам его и возвращать).
+        self._own_connection = True
 
     async def __aenter__(self):
-        connection: "asyncpg.Connection" = await self.pool.acquire()
+        parent = _current_session.get()
+
+        if parent is not None:
+            # Уже внутри транзакции — переиспользуем ЕЁ соединение, иначе не
+            # увидим её незакоммиченных данных (см. докстринг класса).
+            connection: "asyncpg.Connection" = parent.connection
+            self._own_connection = False
+        else:
+            connection = await self.pool.acquire()
+            self._own_connection = True
+
+        # На вложенном вызове asyncpg сам выпустит SAVEPOINT вместо BEGIN.
         transaction = connection.transaction()
 
         assert isinstance(transaction, Transaction)
@@ -73,9 +117,14 @@ class ContainerTransaction:
 
         if exc_type is not None:
             # Выпало исключение вызвать ролбек
+            # (вложенный -> ROLLBACK TO SAVEPOINT, внешняя транзакция цела)
             await self.session.transaction.rollback()
         else:
             # Не выпало исключение вызвать комит
+            # (вложенный -> RELEASE SAVEPOINT; реальный COMMIT сделает внешняя)
             await self.session.transaction.commit()
-        # В любом случае вернуть соединение в пул
-        await self.pool.release(self.session.connection)
+
+        # Соединение возвращает в пул только тот, кто его брал: вложенный блок
+        # им не владеет, и release здесь оборвал бы внешнюю транзакцию.
+        if self._own_connection:
+            await self.pool.release(self.session.connection)
