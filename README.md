@@ -31,7 +31,7 @@
 <small>It is used for running locally without dependencies and for demonstrating capabilities; there is also a production build, but that is a separate script.</small>
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.dev.yml up --build
 ```
 
 - Frontend: http://127.0.0.1:7777

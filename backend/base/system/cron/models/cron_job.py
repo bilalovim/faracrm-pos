@@ -312,9 +312,10 @@ async def __cron_task__():
             **kwargs,
         )
         if existing:
-            job = existing[0]
-            await job.update(cron_job_new)
-            return job
+            ...
+            # job = existing[0]
+            # await job.update(cron_job_new)
+            # return job
         else:
             job = await env.models.cron_job.create(cron_job_new)
             return job
