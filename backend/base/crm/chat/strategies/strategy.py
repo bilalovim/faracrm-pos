@@ -685,7 +685,7 @@ class ChatStrategyBase(ABC):
 
         logger.info(
             "Process attachments end: %s",
-            attachments,
+            [attach.name for attach in attachments],
         )
         if attachments:
             await env.models.attachment.create_bulk(attachments)
