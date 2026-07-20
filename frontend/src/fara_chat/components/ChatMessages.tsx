@@ -775,6 +775,25 @@ export function ChatMessages({
                             <Box />
                           )}
                           <Group gap={4}>
+                            {/* Канал сообщения — та же иконка, что и в
+                                текстовом бабле (см. блок у времени бабла).
+                                Нужна и здесь, иначе у сообщений только со
+                                вложениями (напр. ВК-медиа без подписи) канал
+                                не виден. Цвет dimmed — как у соседнего времени
+                                (футер вне бабла, на фоне чата). */}
+                            {message.connector_type &&
+                              message.connector_type !== 'internal' && (
+                                <Text
+                                  component="span"
+                                  c="dimmed"
+                                  title={message.connector_type}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                  }}>
+                                  {connectorIcon(message.connector_type, 14)}
+                                </Text>
+                              )}
                             <Text size="xs" c="dimmed">
                               {formatTime(message.create_datetime)}
                             </Text>

@@ -2,6 +2,7 @@ import { List } from '@/components/List/List';
 import { Field } from '@/components/List/Field';
 import { Badge } from '@mantine/core';
 import { useTranslation } from 'react-i18next';
+import DateTimeCell from '@/components/ListCells/DateTimeCell';
 
 // Компонент для отображения статуса webhook
 function WebhookStateBadge({ value }: { value: string }) {
@@ -58,7 +59,11 @@ export function ConnectorList() {
       />
       {/* <Field name="webhook_url" label={t('connector.fields.webhookUrl')} /> */}
       <Field name="connector_url" label={t('connector.fields.connectorUrl')} />
-      <Field name="create_datetime" label={t('connector.fields.createDate')} />
+      <Field
+        name="create_datetime"
+        label={t('connector.fields.createDate')}
+        render={value => <DateTimeCell value={value} format="full" />}
+      />
     </List>
   );
 }
