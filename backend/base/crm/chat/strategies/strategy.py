@@ -562,8 +562,12 @@ class ChatStrategyBase(ABC):
             external_chat_id=adapter.chat_id,
         )
 
-        # 6. Обрабатываем изображения
-        await self._process_attachments(connector, adapter, message)
+        # 6. Обрабатываем изображения. Возвращённый список уже в формате
+        # REST-эндпоинта — кладём его в WS-пейлоад ниже, чтобы вложения
+        # входящего сообщения показывались вживую, без обновления страницы.
+        attachments_payload = await self._process_attachments(
+            connector, adapter, message
+        )
 
         # 7. Лидогенерация выполнена ВЫШЕ (до post_message), чтобы message.lead_id
         # проставился синхронно. Здесь ничего не делаем.
@@ -599,6 +603,9 @@ class ChatStrategyBase(ABC):
                         else None
                     ),
                     "connector_type": connector.type,
+                    # Вложения в формате REST /messages — чтобы бинарный
+                    # контент показывался сразу по WS, а не только после F5.
+                    "attachments": attachments_payload,
                 },
                 "external": True,
             },
@@ -616,8 +623,14 @@ class ChatStrategyBase(ABC):
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
         message,
-    ) -> None:
-        """Обработать вложения (изображения, файлы)."""
+    ) -> list[dict]:
+        """Обработать вложения (изображения, файлы).
+
+        Возвращает вложения в ТОМ ЖЕ формате, что и REST-эндпоинт
+        /messages (messages.py: словарь id/name/mimetype/size/checksum/
+        is_voice/show_preview), чтобы WS-пейлоад входящего сообщения и
+        дозагрузка страницы рендерились фронтом одинаково. Нет вложений — [].
+        """
         logger.info(
             "Process attachments: %s, %s, %s",
             adapter,
@@ -687,8 +700,47 @@ class ChatStrategyBase(ABC):
             "Process attachments end: %s",
             [attach.name for attach in attachments],
         )
-        if attachments:
-            await env.models.attachment.create_bulk(attachments)
+        if not attachments:
+            # Нет вложений — отдаём [], а не None: вызывающий код кладёт
+            # его в WS-пейлоад как "attachments": [] (пустой, но валидный).
+            return []
+
+        await env.models.attachment.create_bulk(attachments)
+
+        # Перечитываем из БД теми же полями, что и REST /messages. На
+        # in-memory объектах незаданные поля (is_voice/show_preview)
+        # читаются как None вместо дефолта БД — точного совпадения с REST
+        # не дают. Чтение идёт в той же внешней транзакции (create_bulk —
+        # вложенный SAVEPOINT на том же соединении), поэтому видит свои же
+        # ещё не закоммиченные строки.
+        rows = await env.models.attachment.search(
+            filter=[
+                ("res_model", "=", "chat_message"),
+                ("res_id", "=", message.id),
+            ],
+            fields=[
+                "id",
+                "name",
+                "mimetype",
+                "size",
+                "checksum",
+                "is_voice",
+                "show_preview",
+            ],
+        )
+        # Формат словаря — зеркало REST-сериализации вложения в messages.py.
+        return [
+            {
+                "id": att.id,
+                "name": att.name,
+                "mimetype": att.mimetype,
+                "size": att.size,
+                "checksum": att.checksum,
+                "is_voice": att.is_voice or False,
+                "show_preview": att.show_preview,
+            }
+            for att in rows
+        ]
 
     # Лидогенерация
     async def _fetch_item_info(
