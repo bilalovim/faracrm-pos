@@ -25,12 +25,19 @@ class PartnersApp(App):
         "depends": ["security"],
     }
 
+    # contact_type — конфигурационный справочник, а не пользовательские данные,
+    # поэтому обычному пользователю только чтение:
     BASE_USER_ACL = {
         "partner": ACL.FULL,
         "contact": ACL.FULL,
-        "contact_type": ACL.FULL,
+        "contact_type": ACL.READ_ONLY,
     }
 
+    ROLE_ACL = {
+        "system_admin": {
+            "contact_type": ACL.FULL,
+        },
+    }
     # ROLE_ACL = {
     #     "partner_user": {
     #         "partner": ACL.FULL,

@@ -25,5 +25,5 @@ class ContractApp(App):
     }
 
     BASE_USER_ACL = {
-        "contract": ACL.FULL,
+        "contract": ACL.READ_ONLY,
     }
