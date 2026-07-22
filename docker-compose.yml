@@ -83,32 +83,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    # env_file:
-    #   - .env
+    env_file:
+      - .env
     environment:
       # DB config (env_nested_delimiter="__")
 
       DOTORM_DATABASES_POSTGRES__FARA__HOST: postgres
-      DOTORM_DATABASES_POSTGRES__FARA__PORT: 5432
-      DOTORM_DATABASES_POSTGRES__FARA__USER: openpg
-      DOTORM_DATABASES_POSTGRES__FARA__PASSWORD: openpgpwd
-      DOTORM_DATABASES_POSTGRES__FARA__DATABASE: fara
-      DOTORM_DATABASES_POSTGRES__FARA__DRIVER: asyncpg
-      DOTORM_DATABASES_POSTGRES__FARA__SYNC_DB: "true"
+      # DOTORM_DATABASES_POSTGRES__FARA__PORT: 5432
+      # DOTORM_DATABASES_POSTGRES__FARA__USER: openpg
+      # DOTORM_DATABASES_POSTGRES__FARA__PASSWORD: openpgpwd
+      # DOTORM_DATABASES_POSTGRES__FARA__DATABASE: fara
+      # DOTORM_DATABASES_POSTGRES__FARA__DRIVER: asyncpg
+      # DOTORM_DATABASES_POSTGRES__FARA__SYNC_DB: "true"
 
       # Workers count
       # WEB_WORKERS: 2
 
       # Disable SSL for local Docker postgres
-      PGSSLMODE: disable
+      PGSSLMODE: prefer
 
       # Logger
       LOGGER__LOG_LEVEL: DEBUG
 
       # Cookie only https, because use double token pattern
-      # AUTH__COOKIE_SECURE: "false"
-      # AUTH__COOKIE_NAME: session_cookie
-      # AUTH__COOKIE_SAMESITE: lax
+      AUTH__COOKIE_SECURE: true
+      AUTH__COOKIE_NAME: session_cookie
+      AUTH__COOKIE_SAMESITE: lax
 
       # Cron settings
       # CRON__ENABLED: "true"
