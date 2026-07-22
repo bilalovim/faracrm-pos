@@ -53,7 +53,10 @@ import type { GalleryItem } from '@/components/Attachment';
 import { downloadAttachment } from '@/utils/attachmentUrls';
 import { useDispatch } from 'react-redux';
 import styles from './ChatMessages.module.css';
-import { EmailMessageContent } from './EmailMessageContent';
+import {
+  EmailMessageContent,
+  parseEmailBody,
+} from './EmailMessageContent';
 import { CallMessageContent } from './CallMessageContent';
 import { connectorIcon } from './connectorMeta';
 
@@ -68,6 +71,18 @@ const isEmailMessage = (m: {
   connector_type?: string;
   message_type?: string;
 }): boolean => m.connector_type === 'email' || m.message_type === 'email';
+
+/**
+ * Есть ли что показать в бабле. У письма body — всегда непустой JSON
+ * {subject, html}, поэтому проверка body.trim() для него ничего не значит:
+ * письмо с одним вложением рисовало пустой бабл над карточкой файла.
+ */
+const hasBubbleContent = (m: ChatMessage): boolean => {
+  if (m.message_type === 'call') return true;
+  if (!isEmailMessage(m)) return Boolean(m.body?.trim());
+  const { subject, html } = parseEmailBody(m.body ?? '');
+  return Boolean(subject?.trim() || html.replace(/<[^>]*>/g, '').trim());
+};
 
 interface ChatMessagesProps {
   chat: Chat;
@@ -260,10 +275,13 @@ export function ChatMessages({
   const canDeleteMessage = (message: ChatMessage) =>
     isOwnMessage(message) || isCurrentUserChatAdmin;
 
-  const handleOpenGallery = (message: ChatMessage, attachmentIndex: number) => {
+  // По id вложения, а не по позиции в общем списке: галерея — только
+  // картинки, а список вложений смешанный (у письма это норма).
+  const handleOpenGallery = (message: ChatMessage, attachmentId: number) => {
     const imageAttachments =
       message.attachments?.filter(a => isImageMimetype(a.mimetype)) || [];
-    if (imageAttachments.length === 0) return;
+    const index = imageAttachments.findIndex(a => a.id === attachmentId);
+    if (index === -1) return;
     setGalleryItems(
       imageAttachments.map(a => ({
         id: a.id,
@@ -272,7 +290,7 @@ export function ChatMessages({
         checksum: a.checksum,
       })),
     );
-    setGalleryIndex(attachmentIndex);
+    setGalleryIndex(index);
     setGalleryOpened(true);
   };
 
@@ -550,7 +568,7 @@ export function ChatMessages({
                         className={styles.attachmentsContainer}
                         style={{ position: 'relative' }}>
                         {/* Pin иконка на вложениях только если нет текста */}
-                        {message.pinned && !message.body?.trim() && (
+                        {message.pinned && !hasBubbleContent(message) && (
                           <Box className={styles.pinnedIcon}>
                             <IconPinFilled
                               size={14}
@@ -561,7 +579,7 @@ export function ChatMessages({
                         <SimpleGrid
                           cols={message.attachments.length === 1 ? 1 : 2}
                           spacing={4}>
-                          {message.attachments.map((att, attIndex) => (
+                          {message.attachments.map(att => (
                             <AttachmentPreview
                               key={att.id}
                               attachment={{
@@ -573,7 +591,7 @@ export function ChatMessages({
                               }}
                               onClick={
                                 isImageMimetype(att.mimetype)
-                                  ? () => handleOpenGallery(message, attIndex)
+                                  ? () => handleOpenGallery(message, att.id)
                                   : undefined
                               }
                               onDownload={() =>
@@ -594,9 +612,7 @@ export function ChatMessages({
                        Для call и email рендерим всегда — у call body пустой
                        (вся инфа в call_* полях), у email body может быть
                        пустым при проблемах парсинга. */}
-                    {(message.body?.trim() ||
-                      message.message_type === 'call' ||
-                      isEmailMessage(message)) && (
+                    {hasBubbleContent(message) && (
                       <Paper
                         className={`${styles.messageBubble} ${isOwnMessage(message) ? styles.own : styles.other} ${isEmailMessage(message) ? styles.emailBubble : ''}`}
                         onContextMenu={e => handleContextMenu(e, message)}
@@ -737,7 +753,7 @@ export function ChatMessages({
                     )}
 
                     {/* Время для сообщений только с вложениями */}
-                    {!message.body?.trim() &&
+                    {!hasBubbleContent(message) &&
                       message.attachments &&
                       message.attachments.length > 0 && (
                         <Group

@@ -327,6 +327,18 @@ class Attachment(AuditMixin, DotModel):
             if storage.type != "file":
                 payload.show_preview = False
 
+            logger.info(
+                "Creating attachment '%s' in storage '%s'",
+                payload.name,
+                storage.name,
+            )
+
+            # Сначала INSERT: id записи входит в путь файла, поэтому путь
+            # уникален по построению (имя файла задаёт отправитель, и
+            # «Договор.pdf» приходит постоянно). Упадёт запись файла —
+            # транзакция откатит и строку.
+            payload.id = await super().create(payload, session, depends_jobs)
+
             strategy = get_strategy(storage.type)
             result = await strategy.create_file(
                 storage=storage,
@@ -345,14 +357,9 @@ class Attachment(AuditMixin, DotModel):
             payload.storage_parent_name = (
                 result.get("storage_parent_name") or parent_folder_name
             )
+            await self._save_storage_fields([payload], session)
 
-            logger.info(
-                "Creating attachment '%s' in storage '%s'",
-                payload.name,
-                storage.name,
-            )
-
-            return await super().create(payload, session, depends_jobs)
+            return payload.id
 
     async def update(
         self,
@@ -418,21 +425,28 @@ class Attachment(AuditMixin, DotModel):
 
         async with tx as active_session:
             writable = await self._prepare_attachments(payloads)
+
+            # INSERT идёт ПЕРВЫМ: id записи входит в путь файла (см.
+            # FileStoreStrategy._get_file_path), поэтому путь уникален по
+            # построению. super().create_bulk проставляет id в payload'ы.
+            records = await super().create_bulk(
+                payloads, active_session, depends_jobs
+            )
+
             if writable:
                 # return_exceptions=False: первая же ошибка записи валит
-                # всю транзакцию. Файлы уже успешно записанных задач
-                # остаются orphan'ами на диске — это отдельная тема
-                # cleanup'а, не решаем здесь.
+                # всю транзакцию вместе со вставленными строками.
                 await asyncio.gather(
                     *(
                         self._write_file(p, cb, st, pid)
                         for p, cb, st, pid in writable
                     )
                 )
+                await self._save_storage_fields(
+                    [p for p, *_ in writable], active_session
+                )
 
-            return await super().create_bulk(
-                payloads, active_session, depends_jobs
-            )
+            return records
 
     async def _prepare_attachments(
         self, payloads: list[Self]
@@ -481,6 +495,45 @@ class Attachment(AuditMixin, DotModel):
             writable.append((payload, payload.content, storage, parent_id))
 
         return writable
+
+    @classmethod
+    async def _save_storage_fields(cls, payloads: list[Self], session) -> None:
+        """
+        Дописать пути хранилища: они известны только после записи файла, а
+        файл пишется после INSERT (путь содержит id записи).
+
+        Одним запросом: update_bulk для этого не годится — он применяет ОДИН
+        набор значений ко всем id, а путь у каждого вложения свой.
+        """
+        if not payloads:
+            return
+
+        # session может не прийти: create() открывает транзакцию контекстом и
+        # наружу передаёт None. _get_db_session берёт явную сессию, иначе — из
+        # контекста текущей транзакции (так же делают update/create_bulk).
+        session = cls._get_db_session(session)
+
+        await session.execute(
+            f"""
+            UPDATE {cls.__table__} AS a
+               SET storage_file_url = v.url,
+                   storage_file_id = v.file_id,
+                   storage_parent_id = v.parent_id,
+                   storage_parent_name = v.parent_name
+              FROM unnest(%s::int[], %s::text[], %s::text[],
+                          %s::text[], %s::text[])
+                   AS v(id, url, file_id, parent_id, parent_name)
+             WHERE a.id = v.id
+            """,
+            (
+                [p.id for p in payloads],
+                [p.storage_file_url for p in payloads],
+                [p.storage_file_id for p in payloads],
+                [p.storage_parent_id for p in payloads],
+                [p.storage_parent_name for p in payloads],
+            ),
+            cursor="void",
+        )
 
     async def _write_file(
         self,

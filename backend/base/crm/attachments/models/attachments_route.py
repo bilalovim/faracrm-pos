@@ -178,9 +178,12 @@ class AttachmentRoute(DotModel):
         # Simple variable substitution
         try:
             result = template.format(**context)
-        except KeyError as e:
-            logger.warning("Missing variable in template: %s", e)
-            result = template
+        except KeyError:
+            # У модели нет такого поля (у chat_message нет name) — папка по id.
+            # Иначе шаблон возвращался как есть и становился именем папки,
+            # общим для ВСЕХ записей модели: файлы с совпавшими именами
+            # ложились рядом и затирали друг друга.
+            result = str(context.get("id", ""))
 
         return result
 

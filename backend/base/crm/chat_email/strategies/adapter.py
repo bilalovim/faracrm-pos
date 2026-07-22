@@ -2,6 +2,7 @@
 # Chat module - Email message adapter
 
 import json
+import mimetypes
 import re
 from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
@@ -211,12 +212,12 @@ class EmailMessageAdapter(ChatMessageAdapter):
             text_part = None
             html_part = None
 
-            for part in msg.walk():
+            for index, part in enumerate(msg.walk(), 1):
                 content_type = part.get_content_type()
-                content_disposition = str(part.get("Content-Disposition", ""))
 
-                # Пропускаем вложения
-                if "attachment" in content_disposition:
+                # Пропускаем вложения — тем же правилом, каким их забирает
+                # attachments, чтобы часть не попала и туда, и сюда.
+                if self._attachment_name(part, index):
                     continue
 
                 if content_type == "text/plain" and not text_part:
@@ -232,6 +233,10 @@ class EmailMessageAdapter(ChatMessageAdapter):
                 return self._decode_part(html_part)
             return ""
         else:
+            # Письмо из одного файла (Content-Type: application/pdf) — это
+            # вложение, а не тело: иначе байты декодируются в абракадабру.
+            if self._attachment_name(msg, 1):
+                return ""
             return self._decode_part(msg)
 
     def _decode_part(self, part: Message) -> str:
@@ -291,79 +296,79 @@ class EmailMessageAdapter(ChatMessageAdapter):
         return 0
 
     @property
-    def images(self) -> list[dict]:
-        """Список изображений-вложений."""
-        return self._get_attachments(filter_type="image")
-
-    @property
     def files(self) -> list[dict]:
-        """Список файлов-вложений (не изображения)."""
-        return self._get_attachments(filter_type="file")
-
-    def _get_attachments(self, filter_type: str = "all") -> list[dict]:
         """
-        Извлечь вложения из письма.
+        Вложения письма С СОДЕРЖИМЫМ: [{name, mime_type, content}].
 
-        Args:
-            filter_type: "image", "file", или "all"
+        Всё одним списком: делить на images/files незачем, общий приёмник
+        всё равно их склеивает (стратегия объявляет attachments_source =
+        "content", поэтому скачивание не вызывается).
         """
-        attachments = []
-
         if self._is_webhook:
-            # Mailgun/SendGrid вложения обычно в отдельных полях
-            # attachment-count, attachment-1, attachment-2, etc.
-            attachment_count = int(self.raw.get("attachment-count", 0))
-            for i in range(1, attachment_count + 1):
+            # Mailgun/SendGrid: attachment-count, attachment-1, attachment-2...
+            count = int(self.raw.get("attachment-count", 0))
+            files = []
+            for i in range(1, count + 1):
                 att = self.raw.get(f"attachment-{i}")
                 if att:
-                    # Mailgun отдаёт файлы как объекты
-                    attachments.append(
+                    files.append(
                         {
-                            "file_name": getattr(
+                            "name": getattr(
                                 att, "filename", f"attachment-{i}"
                             ),
-                            "content_type": getattr(
-                                att, "content_type", "application/octet-stream"
-                            ),
+                            "mime_type": getattr(att, "content_type", None),
                             "content": (
                                 att.read() if hasattr(att, "read") else att
                             ),
                         }
                     )
-            return attachments
+            return files
 
-        if self._parsed_email and self._parsed_email.is_multipart():
-            for part in self._parsed_email.walk():
-                content_disposition = str(part.get("Content-Disposition", ""))
+        if not self._parsed_email:
+            return []
 
-                if "attachment" not in content_disposition:
-                    continue
-
-                filename = part.get_filename()
-                if filename:
-                    filename = decode_email_header(filename)
-                else:
-                    filename = "attachment"
-
-                content_type = part.get_content_type()
-                payload = part.get_payload(decode=True)
-
-                is_image = content_type.startswith("image/")
-
-                if filter_type == "image" and not is_image:
-                    continue
-                if filter_type == "file" and is_image:
-                    continue
-
-                attachments.append(
+        files = []
+        # Без is_multipart(): письмо может целиком состоять из одного файла.
+        for index, part in enumerate(self._parsed_email.walk(), 1):
+            name = self._attachment_name(part, index)
+            payload = part.get_payload(decode=True) if name else None
+            if payload:
+                files.append(
                     {
-                        "file_name": filename,
-                        "content_type": content_type,
+                        "name": name,
+                        "mime_type": part.get_content_type(),
                         "content": payload,
                     }
                 )
+        return files
 
-        return attachments
+    @staticmethod
+    def _attachment_name(part: Message, index: int) -> str | None:
+        """Имя файла, если часть — вложение. Иначе None (это тело письма)."""
+        if part.get_content_maintype() == "multipart":
+            return None
+
+        disposition = str(part.get("Content-Disposition") or "").lower()
+        filename = part.get_filename()
+        # Текстовая часть с именем, но без disposition — это тело письма
+        # (у него тоже бывает параметр name), а не файл.
+        if filename and (
+            "attachment" in disposition
+            or part.get_content_maintype() != "text"
+        ):
+            return decode_email_header(filename)
+        if "attachment" in disposition:
+            return "attachment"
+
+        # Картинка, вставленная в тело: имени нет, есть только Content-ID.
+        # Без своего имени она пропадала бесследно — src="cid:..." вырезает
+        # санитайзер, а вложением она не считалась.
+        content_id = (part.get("Content-ID") or "").strip("<> ")
+        if content_id and part.get_content_maintype() != "text":
+            ext = mimetypes.guess_extension(part.get_content_type()) or ""
+            return f"inline-{index}{ext}"
+
+        return None
 
     @property
     def should_skip(self) -> bool:

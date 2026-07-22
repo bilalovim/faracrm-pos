@@ -164,12 +164,16 @@ class FileStoreStrategy(StorageStrategyBase):
         attachment: "Attachment",
         filename: str,
         parent_id: str,
-        checksum: str | None = None,
     ) -> str:
         """
         Build file path for storage.
 
-        Structure: filestore/<parent_id>/<filename>
+        Structure: filestore/<parent_id>/<attachment_id>/<filename>
+
+        Подкаталог по id записи делает путь уникальным по построению: имя
+        задаёт отправитель ("Договор.pdf" шлют все подряд), и раньше второй
+        файл молча затирал первый. Пользователю имя всё равно отдаётся из
+        базы (attachment.name), а не с диска.
         """
         base_path = await self._get_base_path(storage)
         # Безопасное имя файла (Path Traversal Protection)
@@ -178,6 +182,7 @@ class FileStoreStrategy(StorageStrategyBase):
         parts = [base_path]
         if parent_id:
             parts.append(str(parent_id))
+        parts.append(str(attachment.id))
         parts.append(safe_name)
 
         return os.path.join(*parts)
@@ -215,7 +220,7 @@ class FileStoreStrategy(StorageStrategyBase):
         )
 
         file_path = await self._get_file_path(
-            storage, attachment, safe_filename, parent_id, checksum
+            storage, attachment, safe_filename, parent_id
         )
         dir_path = os.path.dirname(file_path)
 
@@ -224,8 +229,10 @@ class FileStoreStrategy(StorageStrategyBase):
             None, lambda: os.makedirs(dir_path, exist_ok=True)
         )
 
-        # 3. Асинхронная запись
-        async with aiofiles.open(file_path, mode="wb") as f:
+        # 3. Асинхронная запись. "xb", а не "wb": путь содержит id записи и
+        # потому уникален, занятый файл означал бы ошибку — упасть лучше,
+        # чем затереть чужие байты.
+        async with aiofiles.open(file_path, mode="xb") as f:
             await f.write(content)
 
         return {
@@ -308,7 +315,6 @@ class FileStoreStrategy(StorageStrategyBase):
                 attachment,
                 new_filename,
                 attachment.storage_parent_id,
-                checksum,
             )
 
             # Создаем папки и записываем

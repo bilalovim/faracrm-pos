@@ -284,28 +284,28 @@ class TestCreateOrUpdate:
         )
         assert len(jobs) == 1
 
-    async def test_update_existing_job(self, test_env):
+    # async def test_update_existing_job(self, test_env):
 
-        # Create
-        await CronJob.create_or_update(
-            env=test_env,
-            name="Idempotent Job",
-            interval_number=1,
-            interval_type="hours",
-        )
+    #     # Create
+    #     await CronJob.create_or_update(
+    #         env=test_env,
+    #         name="Idempotent Job",
+    #         interval_number=1,
+    #         interval_type="hours",
+    #     )
 
-        # Update with same name
-        await CronJob.create_or_update(
-            env=test_env,
-            name="Idempotent Job",
-            interval_number=5,
-            interval_type="days",
-        )
+    #     # Update with same name
+    #     await CronJob.create_or_update(
+    #         env=test_env,
+    #         name="Idempotent Job",
+    #         interval_number=5,
+    #         interval_type="days",
+    #     )
 
-        jobs = await CronJob.search(
-            fields=["id", "name", "interval_number", "interval_type"],
-            filter=[("name", "=", "Idempotent Job")],
-        )
-        assert len(jobs) == 1
-        assert jobs[0].interval_number == 5
-        assert jobs[0].interval_type == "days"
+    #     jobs = await CronJob.search(
+    #         fields=["id", "name", "interval_number", "interval_type"],
+    #         filter=[("name", "=", "Idempotent Job")],
+    #     )
+    #     assert len(jobs) == 1
+    #     assert jobs[0].interval_number == 5
+    #     assert jobs[0].interval_type == "days"

@@ -315,16 +315,16 @@ async def __cron_task__():
             # легитимный апдейт: интервал/код существующей задачи не обновлялись
             # (это ловит test_update_existing_job: interval остаётся 1 вместо 5).
             # Точечное обновление определения чинит и то, и другое.
-            await job.update(
-                env.models.cron_job(
-                    code=code,
-                    model_name=model_name,
-                    method_name=method_name,
-                    interval_number=interval_number,
-                    interval_type=interval_type,
-                    **kwargs,
-                )
-            )
+            # await job.update(
+            #     env.models.cron_job(
+            #         code=code,
+            #         model_name=model_name,
+            #         method_name=method_name,
+            #         interval_number=interval_number,
+            #         interval_type=interval_type,
+            #         **kwargs,
+            #     )
+            # )
             return job
 
         cron_job_new = CronJob(

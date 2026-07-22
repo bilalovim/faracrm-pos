@@ -104,42 +104,40 @@ class TelegramMessageAdapter(ChatMessageAdapter):
         largest = max(photos, key=lambda x: x.get("file_size", 0))
         return [largest]
 
+    # Медиа с file_id и имя-фолбэк, если Telegram не прислал file_name.
+    # None — формат заранее неизвестен (у стикера их три), имя подберётся
+    # по типу скачанного файла.
+    _MEDIA = (
+        ("voice", "voice.oga"),
+        ("audio", None),
+        ("video", "video.mp4"),
+        ("video_note", "video_note.mp4"),
+        ("animation", "animation.mp4"),
+        ("sticker", None),
+        ("document", None),
+    )
+
     @property
     def files(self) -> list[dict]:
-        """Список файлов/документов в сообщении."""
-        document = self._message.get("document")
-        if document:
-            return [
+        """Файлы сообщения: документ, голосовое, видео, кружок, стикер."""
+        files = []
+        for field, default_name in self._MEDIA:
+            media = self._message.get(field)
+            # Гифка приходит и в animation, и в document — это один файл.
+            if not media or (
+                field == "document" and "animation" in self._message
+            ):
+                continue
+            files.append(
                 {
-                    "file_id": document.get("file_id"),
-                    "file_name": document.get("file_name", "document"),
-                    "mime_type": document.get(
-                        "mime_type", "application/octet-stream"
-                    ),
-                    "file_size": document.get("file_size", 0),
+                    "file_id": media.get("file_id"),
+                    "file_name": media.get("file_name") or default_name,
+                    "mime_type": media.get("mime_type"),
+                    "file_size": media.get("file_size", 0),
+                    "is_voice": field == "voice",
                 }
-            ]
-        return []
-
-    @property
-    def voice(self) -> dict | None:
-        """Голосовое сообщение."""
-        return self._message.get("voice")
-
-    @property
-    def audio(self) -> dict | None:
-        """Аудио файл."""
-        return self._message.get("audio")
-
-    @property
-    def video(self) -> dict | None:
-        """Видео файл."""
-        return self._message.get("video")
-
-    @property
-    def sticker(self) -> dict | None:
-        """Стикер."""
-        return self._message.get("sticker")
+            )
+        return files
 
     @property
     def should_skip(self) -> bool:

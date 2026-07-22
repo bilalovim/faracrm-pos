@@ -562,10 +562,10 @@ class ChatStrategyBase(ABC):
             external_chat_id=adapter.chat_id,
         )
 
-        # 6. Обрабатываем изображения. Возвращённый список уже в формате
+        # 6. Сохраняем вложения. Возвращённый список уже в формате
         # REST-эндпоинта — кладём его в WS-пейлоад ниже, чтобы вложения
         # входящего сообщения показывались вживую, без обновления страницы.
-        attachments_payload = await self._process_attachments(
+        attachments_payload = await self.save_attachments(
             connector, adapter, message
         )
 
@@ -589,7 +589,7 @@ class ChatStrategyBase(ABC):
                 "chat_id": chat_id,
                 "message": {
                     "id": message.id,
-                    "body": message.body,
+                    "body": message.body[:200] if message.body else None,
                     "author": author_data,
                     "author_user_id": author_user_id,
                     "author_partner_id": author_partner_id,
@@ -618,88 +618,62 @@ class ChatStrategyBase(ABC):
             message.id,
         )
 
-    async def _process_attachments(
+    # В каком виде канал отдаёт бинарные данные вложения:
+    #   "url"     — ссылка или идентификатор, файл надо скачать (мессенджеры);
+    #   "content" — байты уже лежат в самом сообщении (почта).
+    attachments_source = "url"
+
+    async def save_attachments(
         self,
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
         message,
     ) -> list[dict]:
-        """Обработать вложения (изображения, файлы).
+        """Сохранить вложения сообщения.
 
         Возвращает вложения в ТОМ ЖЕ формате, что и REST-эндпоинт
         /messages (messages.py: словарь id/name/mimetype/size/checksum/
         is_voice/show_preview), чтобы WS-пейлоад входящего сообщения и
         дозагрузка страницы рендерились фронтом одинаково. Нет вложений — [].
         """
-        logger.info(
-            "Process attachments: %s, %s, %s",
-            adapter,
-            adapter.images,
-            adapter.files,
-        )
-        attachments_content = []
-        if adapter.images:
-            for image_url in adapter.images:
-                try:
-                    image_content, mimetype = await self.file_download(
-                        connector, image_url
-                    )
-                    attachments_content.append((image_content, mimetype))
-                    # TODO: Интеграция с модулем attachments
-                    logger.debug(
-                        "[%s] Downloaded image: %s bytes",
-                        self.strategy_type,
-                        len(image_content),
-                    )
-                except Exception as e:
-                    logger.error(
-                        "[%s] Error downloading image: %s",
-                        self.strategy_type,
-                        e,
-                    )
-
-        if adapter.files:
-            for file_info in adapter.files:
-                try:
-                    file_content, mimetype = await self.file_download(
-                        connector, file_info.get("url", "")
-                    )
-                    attachments_content.append((file_content, mimetype))
-                    # TODO: Интеграция с модулем attachments
-                    logger.debug(
-                        "[%s] Downloaded file: %s (%s bytes)",
-                        self.strategy_type,
-                        file_info.get("name"),
-                        len(file_content),
-                    )
-                except Exception as e:
-                    logger.error(
-                        "[%s] Error downloading file: %s",
-                        self.strategy_type,
-                        e,
-                    )
         attachments: list["Attachment"] = []
-        logger.info(
-            "Process attachments_content end: %s",
-            attachments_content,
-        )
-        for content, mimetype in attachments_content:
-            # Получаем правильное расширение для файла (например, '.jpg' для 'image/jpeg')
+        for index, item in enumerate([*adapter.images, *adapter.files], 1):
+            # Часть каналов отдаёт картинки просто ссылкой.
+            if not isinstance(item, dict):
+                item = {"url": item}
+
+            if self.attachments_source == "content":
+                content, fetched = item["content"], None
+            else:
+                content, fetched = await self.file_download(connector, item)
+
+            # Тип от канала точнее заголовка, но каналы подставляют
+            # octet-stream как свой фолбэк — им заголовок не затираем.
+            mimetype = item.get("mime_type")
+            # Имя от канала, если есть: у письма это настоящее имя файла.
+            # Свой фолбэк нумеруем, иначе безымянные вложения одного
+            # сообщения получат одинаковое имя.
             ext = mimetypes.guess_extension(mimetype) or ""
-            attachment: "Attachment" = env.models.attachment(
-                name=f"{self.strategy_type}_{message.id}{ext}",
-                mimetype=mimetype,
-                size=len(content),
-                content=content,
-                res_model="chat_message",
-                res_id=message.id,
+            attachments.append(
+                env.models.attachment(
+                    name=item.get("name")
+                    or item.get("file_name")
+                    or f"{self.strategy_type}_{message.id}_{index}{ext}",
+                    mimetype=mimetype,
+                    size=len(content),
+                    content=content,
+                    res_model="chat_message",
+                    res_id=message.id,
+                    is_voice=item.get("is_voice", False),
+                )
             )
-            attachments.append(attachment)
 
         logger.info(
-            "Process attachments end: %s",
-            [attach.name for attach in attachments],
+            "[%s] Attachments: %s",
+            self.strategy_type,
+            [a.name for a in attachments],
         )
+
         if not attachments:
             # Нет вложений — отдаём [], а не None: вызывающий код кладёт
             # его в WS-пейлоад как "attachments": [] (пустой, но валидный).
@@ -1047,22 +1021,32 @@ class ChatStrategyBase(ABC):
         )
 
     async def file_download(
-        self, connector: "ChatConnector", file_url: str
+        self, connector: "ChatConnector", file: dict | str
     ) -> tuple[bytes, str]:
         """
-        Скачать файл по URL.
+        Скачать файл по ссылке.
 
         Args:
             connector: Экземпляр коннектора
-            file_url: URL файла
+            file: элемент adapter.images/files — словарь канала или сам URL.
+                Каналы, адресующие файл иначе (Telegram — file_id), метод
+                переопределяют и читают свои ключи сами.
 
         Returns:
-            Содержимое файла в байтах
+            Содержимое файла в байтах и его MIME-тип
         """
         import httpx
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        file_url = file["url"] if isinstance(file, dict) else file
+
+        # follow_redirects: у httpx это не поведение по умолчанию, а CDN
+        # мессенджеров отвечают 302. raise_for_status: иначе страница ошибки
+        # сохранится как вложение с правильным именем.
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True
+        ) as client:
             response = await client.get(file_url)
+            response.raise_for_status()
             # Получаем MIME-тип и очищаем его от возможных параметров вроде charset=utf-8
             content_type = response.headers.get("content-type", "")
             mime_type = (

@@ -12,7 +12,7 @@ interface EmailMessageContentProps {
  * Разобрать «email-формат» тела: JSON {subject, html} (по аналогии с тем, как
  * system хранит {event, params}). Фолбэк для старых писем — весь body как HTML.
  */
-function parseEmailBody(body: string): { subject?: string; html: string } {
+export function parseEmailBody(body: string): { subject?: string; html: string } {
   if (!body) return { html: '' };
   try {
     const data = JSON.parse(body);
