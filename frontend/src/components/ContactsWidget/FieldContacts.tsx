@@ -1,6 +1,8 @@
 import { useContext, useEffect, useState } from 'react';
-import { InputBase } from '@mantine/core';
+import { InputBase, Text, Group } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { IconUserPlus } from '@tabler/icons-react';
+import { useTranslation } from 'react-i18next';
 import {
   FormFieldsContext,
   useFormContext,
@@ -70,17 +72,16 @@ interface FieldContactsProps {
  */
 export function FieldContacts({
   name,
-  model,
   label,
   labelPosition,
   allowedTypes,
   maxContacts,
   hidePrimary,
   parentField,
-  parentModel,
   children,
 }: FieldContactsProps) {
   const form = useFormContext();
+  const { t } = useTranslation('common');
   const { fields: fieldsServer } = useContext(FormFieldsContext);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -234,6 +235,14 @@ export function FieldContacts({
     }
   };
 
+  // Контакт в модели принадлежит партнёру (contact.partner_id). На лиде/
+  // заказе виджет привязан к partner_id (parentField): телефон должен
+  // сохраниться у ПАРТНЁРА, а не у лида (в contact нет lead_id — вешать
+  // некуда). Пока партнёр не выбран, класть контакт некуда — поэтому не даём
+  // вводить и просим сначала выбрать партнёра, иначе номер молча потеряется.
+  // На форме партнёра/юзера parentField нет → виджет виден всегда.
+  const ownerMissing = !!parentField && !ownerId;
+
   return (
     <FieldWrapper label={displayLabel} labelPosition={labelPosition}>
       {/* Hidden input для формы */}
@@ -244,20 +253,48 @@ export function FieldContacts({
         {...form.getInputProps(name)}
       />
 
-      {/* Наш кастомный виджет. Иконка «открыть чат» рендерится в конце
-          инпута добавления контакта (см. ContactsWidget). */}
-      <ContactsWidget
-        name={name}
-        value={contacts}
-        onChange={handleChange}
-        allowedTypes={allowedTypes}
-        maxContacts={maxContacts}
-        hidePrimary={hidePrimary}
-        loading={isFetching}
-        canOpenChat={canOpenChat}
-        onOpenChat={handleOpenChat}
-        chatLoading={creatingChat}
-      />
+      {ownerMissing ? (
+        <Group
+          gap="sm"
+          wrap="nowrap"
+          align="center"
+          style={{
+            padding: '12px 14px',
+            border: '1px dashed var(--mantine-color-default-border)',
+            borderRadius: 'var(--mantine-radius-md)',
+            background: 'var(--mantine-color-default-hover)',
+          }}>
+          <IconUserPlus
+            size={22}
+            stroke={1.5}
+            color="var(--mantine-color-dimmed)"
+            style={{ flexShrink: 0 }}
+          />
+          <div>
+            <Text size="sm" fw={500}>
+              {t('contacts.selectPartnerFirst')}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {t('contacts.selectPartnerHint')}
+            </Text>
+          </div>
+        </Group>
+      ) : (
+        /* Наш кастомный виджет. Иконка «открыть чат» рендерится в конце
+           инпута добавления контакта (см. ContactsWidget). */
+        <ContactsWidget
+          name={name}
+          value={contacts}
+          onChange={handleChange}
+          allowedTypes={allowedTypes}
+          maxContacts={maxContacts}
+          hidePrimary={hidePrimary}
+          loading={isFetching}
+          canOpenChat={canOpenChat}
+          onOpenChat={handleOpenChat}
+          chatLoading={creatingChat}
+        />
+      )}
     </FieldWrapper>
   );
 }

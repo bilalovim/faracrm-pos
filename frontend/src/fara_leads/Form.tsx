@@ -19,6 +19,7 @@ import {
   IconProgress,
   IconPalette,
 } from '@tabler/icons-react';
+import { FieldContacts } from '@/components/ContactsWidget';
 
 /**
  * Форма лида/возможности.
@@ -39,7 +40,7 @@ export function ViewFormLeads(props: ViewFormProps) {
           {/* Контакты партнёра: parentField="partner_id" — владелец берётся
               из partner_id лида; фильтр контактов (partner_id) — из метаданных
               One2many. Здесь же иконка перехода в чат с партнёром. */}
-          <Field
+          {/* <Field
             name="contact_ids"
             widget="contacts"
             label="Контакты"
@@ -47,7 +48,13 @@ export function ViewFormLeads(props: ViewFormProps) {
             <Field name="contact_type_id" />
             <Field name="name" />
             <Field name="is_primary" />
-          </Field>
+          </Field> */}
+          <FieldContacts
+            name="contact_ids"
+            label="Контакты"
+            parentField="partner_id"
+            parentModel="partners"
+          />
         </FormRow>
         <FormRow cols={2}>
           <Field name="stage_id" label="Стадия" />

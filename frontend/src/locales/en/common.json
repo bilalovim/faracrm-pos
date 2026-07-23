@@ -98,5 +98,10 @@
     "signIn": "Sign In",
     "community": "Community"
   },
-  "selectDateTime": "Select date and time"
+  "selectDateTime": "Select date and time",
+  "contacts": {
+    "selectPartnerFirst": "Select a partner first",
+    "selectPartnerHint": "Contacts are stored on the selected partner",
+    "pressPlusToAdd": "Press «+» to add a contact"
+  }
 }

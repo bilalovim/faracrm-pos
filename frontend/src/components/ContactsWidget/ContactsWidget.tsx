@@ -36,6 +36,7 @@ import {
   getContactTypeConfig,
 } from './config';
 import classes from './ContactsWidget.module.css';
+import { useTranslation } from 'react-i18next';
 
 // Маппинг иконок (tabler icon name → component)
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -117,6 +118,7 @@ export function ContactsWidget({
   /** Индикатор загрузки на иконке чата (создание чата). */
   chatLoading?: boolean;
 }) {
+  const { t } = useTranslation('common');
   const [inputValue, setInputValue] = useState('');
   const [selectedType, setSelectedType] = useState<ContactType | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -295,6 +297,10 @@ export function ContactsWidget({
                   <ActionIcon
                     variant="light"
                     size="lg"
+                    // Тот же приём, что и у «+»: клик по выбору типа не должен
+                    // ронять фокус инпута (иначе onBlur добавит контакт раньше
+                    // времени, до выбора типа).
+                    onMouseDown={e => e.preventDefault()}
                     onClick={() => combobox.toggleDropdown()}
                     className={classes.typeButton}>
                     {typeToAdd ? (
@@ -345,6 +351,11 @@ export function ContactsWidget({
               value={inputValue}
               onChange={e => setInputValue(e.currentTarget.value)}
               onKeyDown={handleKeyDown}
+              // Уход фокуса из инпута (например клик по «Создать/Сохранить») —
+              // забираем набранное значение и добавляем его, как будто нажали
+              // «+». Так номер не теряется, если про «+» забыли. handleAdd сам
+              // ничего не делает при пустом вводе.
+              onBlur={handleAdd}
               rightSection={
                 inputValue && typeToAdd ? (
                   // Идёт ввод нового контакта — показываем кнопку добавления.
@@ -352,6 +363,9 @@ export function ContactsWidget({
                     variant="filled"
                     color="blue"
                     size="sm"
+                    // Не уводим фокус из инпута по клику на «+», иначе onBlur
+                    // добавит контакт, а затем onClick — второй раз (дубль).
+                    onMouseDown={e => e.preventDefault()}
                     onClick={handleAdd}>
                     <IconPlus size={14} />
                   </ActionIcon>
@@ -388,6 +402,14 @@ export function ContactsWidget({
                 );
               })()}
             </Box>
+          )}
+
+          {/* Индикация: значение набрано, но ещё не добавлено в список —
+              напоминаем нажать «+» (Enter тоже добавит). */}
+          {inputValue.trim() && typeToAdd && (
+            <Text size="xs" c="orange" mt={4}>
+              {t('contacts.pressPlusToAdd')}
+            </Text>
           )}
         </Box>
       )}

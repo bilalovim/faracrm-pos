@@ -98,5 +98,10 @@
     "signIn": "Войти",
     "community": "Сообщество"
   },
-  "selectDateTime": "Выберите дату и время"
+  "selectDateTime": "Выберите дату и время",
+  "contacts": {
+    "selectPartnerFirst": "Сначала выберите партнёра",
+    "selectPartnerHint": "Контакты сохраняются у выбранного партнёра",
+    "pressPlusToAdd": "Нажмите «+», чтобы добавить контакт"
+  }
 }
