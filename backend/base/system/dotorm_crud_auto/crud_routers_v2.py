@@ -470,11 +470,19 @@ class CRUDRouterGenerator(APIRouter):
         return route
 
     def _get_fields(self) -> Callable:
-        """Получение списка полей модели для фильтрации."""
+        """Получение списка полей модели для фильтрации/настройки колонок.
+
+        private=True поля (password_hash и т.п.) исключаем — они скрыты из
+        API-схемы и не должны попадать ни в фильтры, ни в выбор колонок.
+        """
         Model = self.Model
 
         async def route():
-            all_fields = list(Model.get_fields().keys())
+            all_fields = [
+                name
+                for name, field in Model.get_fields().items()
+                if not getattr(field, "private", False)
+            ]
             return Model.get_fields_info_list(all_fields)
 
         return route

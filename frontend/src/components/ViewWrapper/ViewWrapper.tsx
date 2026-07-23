@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { Group, Loader, Center, ActionIcon, Tooltip, Box } from '@mantine/core';
 import { useNavigate } from 'react-router-dom';
+import { useMediaQuery } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { ViewSwitcher, ViewType } from '@/components/ViewSwitcher';
 import {
@@ -16,6 +17,7 @@ import {
   FilterContext,
 } from '@/components/SearchFilter';
 import { useGetSavedFiltersQuery } from '@/components/SearchFilter/savedFiltersApi';
+import { HeaderSlotContext } from './HeaderSlotContext';
 import { useLazySearchQuery } from '@/services/api/crudApi';
 import { FilterExpression } from '@/services/api/crudTypes';
 import classes from './ViewWrapper.module.css';
@@ -46,6 +48,21 @@ export function ViewWrapper({
 
   // Состояние открытия поиска
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // DOM-узел слота в шапке: активный вид (список) телепортирует сюда свои
+  // контролы («шестерёнку» настройки колонок). Пусто для канбана/гантта/
+  // формы — там в слот никто не кладёт, поэтому и «шестерёнки» нет.
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+
+  // Мобильная вёрстка: поиск занимает всю первую строку и всегда открыт, а
+  // контролы вида (шестерёнка + переключатель) переносятся на вторую строку
+  // справа. Больше ширины поиску там, где её мало. Десктоп — как был.
+  // Переключатель ОСТАЁТСЯ в шапке (а не уезжает в строку «Создать») —
+  // иначе на канбане/форме, где строки «Создать» нет, им нельзя было бы
+  // переключиться обратно на список.
+  const isMobile = useMediaQuery('(max-width: 48em)', false, {
+    getInitialValueInEffect: false,
+  });
 
   // Читаем saved_filters из общего RTK-кеша, прогретого
   // <SavedFiltersPreloader> при старте приложения. После первой загрузки
@@ -213,11 +230,16 @@ export function ViewWrapper({
 
   return (
     <FilterContext.Provider value={filterContextValue}>
+      <HeaderSlotContext.Provider value={headerSlot}>
       <div className={classes.container}>
         <div className={classes.header}>
           <Group justify="space-between" gap="xs" p="xs" wrap="wrap">
-            <Box style={{ flex: 1, minWidth: 0 }}>
-              {!hideSearch && isSearchOpen && (
+            <Box
+              style={{
+                flex: isMobile && !hideSearch ? '1 1 100%' : 1,
+                minWidth: 0,
+              }}>
+              {!hideSearch && (isSearchOpen || isMobile) && (
                 <SearchFilter
                   model={model}
                   onFiltersChange={handleFiltersChange}
@@ -226,9 +248,19 @@ export function ViewWrapper({
               )}
             </Box>
 
-            {/* Правая часть - иконка поиска + ViewSwitcher */}
-            <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
-              {!hideSearch && (
+            {/* Правая часть - контролы вида + поиск + ViewSwitcher.
+                На мобильной строка переносится под поиск и прижимается
+                вправо (marginLeft: auto). */}
+            <Group
+              gap="xs"
+              wrap="nowrap"
+              style={{
+                flexShrink: 0,
+                marginLeft: isMobile && !hideSearch ? 'auto' : undefined,
+              }}>
+              {/* Иконку-переключатель поиска на мобильной прячем — поиск
+                  там и так всегда открыт. */}
+              {!hideSearch && !isMobile && (
                 <Tooltip label={isSearchOpen ? 'Закрыть поиск' : 'Поиск'}>
                   <ActionIcon
                     variant={
@@ -241,6 +273,10 @@ export function ViewWrapper({
                   </ActionIcon>
                 </Tooltip>
               )}
+              {/* Слот активного вида: список кладёт сюда «шестерёнку»
+                  настройки колонок через портал (см. HeaderSlotContext).
+                  На десктопе — справа от лупы. */}
+              <Group ref={setHeaderSlot} gap="xs" wrap="nowrap" />
 
               <ViewSwitcher
                 value={viewType}
@@ -253,6 +289,7 @@ export function ViewWrapper({
 
         <div className={classes.content}>{content}</div>
       </div>
+      </HeaderSlotContext.Provider>
     </FilterContext.Provider>
   );
 }

@@ -31,7 +31,7 @@ export const crudApi = createApi({
   keepUnusedDataFor: 30,
   // global configuration for the api
   // refetchOnReconnect: true,
-  tagTypes: ['Fields', 'SavedFilters', 'Chat', 'ChatMessage'],
+  tagTypes: ['Fields', 'SavedFilters', 'ColumnSettings', 'Chat', 'ChatMessage'],
   endpoints: build => ({
     search: build.query<GetListResult<FaraRecord>, GetListParams>({
       query: queryArg => ({

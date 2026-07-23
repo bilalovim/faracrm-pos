@@ -14,6 +14,7 @@ export const Toolbar = <RecordType extends FaraRecord>({
   massActions,
   extraActions,
   onClearSelection,
+  columnsControl,
 }: {
   model: string;
   selectedRecords: RecordType[];
@@ -21,6 +22,8 @@ export const Toolbar = <RecordType extends FaraRecord>({
   massActions?: boolean;
   extraActions?: React.ReactNode;
   onClearSelection?: () => void;
+  /** Контрол настройки колонок (рендерится рядом с «Создать»). */
+  columnsControl?: React.ReactNode;
 }) => {
   const [deleteStatus, setDeleteStatus] = useState<DeleteStatus>('idle');
   const [deletedCount, setDeletedCount] = useState(0);
@@ -77,6 +80,7 @@ export const Toolbar = <RecordType extends FaraRecord>({
         wrap="nowrap">
         <Flex gap="xs" align="center">
           <NewButton />
+          {columnsControl}
           {extraActions}
         </Flex>
         <Group gap="xs">

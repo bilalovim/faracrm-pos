@@ -9,18 +9,30 @@ import {
   BaseQueryFn,
   TypedUseQueryHookResult,
 } from '@reduxjs/toolkit/query/react';
-import { Children, isValidElement, useEffect, useState } from 'react';
+import {
+  Children,
+  isValidElement,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import {
   FaraRecord,
+  GetListField,
   GetListParams,
   GetListResult,
 } from '@/services/api/crudTypes';
+import { useGetFieldsQuery } from '@/services/api/crudApi';
 import { useFilters } from '@/components/SearchFilter/FilterContext';
 import { useFilteredSearchQuery } from '@/components/SearchFilter/useFilteredSearchQuery';
 import { BooleanCell } from '@/components/ListCells';
 import { Field } from './Field';
 import { Toolbar } from './Toolbar';
+import { ColumnsMenu } from './ColumnsMenu';
+import { useColumnConfig } from './useColumnConfig';
+import { useHeaderSlot } from '@/components/ViewWrapper/HeaderSlotContext';
 import useWindowDimensions from '@/services/hooks/useWindowDimensions';
 import listClasses from './List.module.css';
 
@@ -88,14 +100,16 @@ export const List = <RecordType extends FaraRecord>({
     },
   );
 
-  // Собираем список полей для запроса, скрытые поля и виртуальные колонки
-  const hiddenFields: Set<string> = new Set();
+  // Собираем поля для запроса, дефолтные видимые колонки и виртуальные
   const virtualColumns: Array<{
     name: string;
     label?: string;
     render: (value: any, record: any) => React.ReactNode;
   }> = [];
   const fieldsList: string[] = [];
+  // Колонки вью «по умолчанию» — реальные, не скрытые, не виртуальные.
+  // От них считается стартовый выбор колонок (см. useColumnConfig ниже).
+  const defaultVisibleFields: string[] = [];
 
   Children.forEach(children, field => {
     if (!isValidElement(field) || field.type !== Field) {
@@ -117,17 +131,19 @@ export const List = <RecordType extends FaraRecord>({
       }
     } else {
       fieldsList.push(name);
-      if (hidden) {
-        hiddenFields.add(name);
+      // Скрытая колонка (<Field hidden>) — запрашиваем, но по умолчанию
+      // не показываем (пользователь может добавить её через меню колонок).
+      if (!hidden) {
+        defaultVisibleFields.push(name);
       }
     }
 
-    // Добавляем дополнительные поля для запроса
+    // Дополнительные поля для запроса (помощники кастом-рендеров) — только
+    // в запрос, в дефолтные колонки не попадают.
     if (extraFields) {
       for (const extraField of extraFields) {
         if (!fieldsList.includes(extraField)) {
           fieldsList.push(extraField);
-          hiddenFields.add(extraField); // Дополнительные поля скрыты
         }
       }
     }
@@ -158,13 +174,55 @@ export const List = <RecordType extends FaraRecord>({
     }
   });
 
+  // Пользовательский выбор колонок (per-user, per-model). По умолчанию —
+  // колонки вью (defaultVisibleFields). allFields — метаданные всех полей
+  // модели: нужны и для меню колонок, и для сборки только что добавленных
+  // колонок до прихода нового ответа поиска.
+  const columnConfig = useColumnConfig(props.model, defaultVisibleFields);
+  const { data: allFields } = useGetFieldsQuery(props.model);
+
+  // Слот в шапке ViewWrapper: если он есть — «шестерёнку» настройки колонок
+  // рендерим туда (портал), а не в тулбар списка. Вне ViewWrapper слота нет
+  // (null) — тогда фолбэк в собственный тулбар (см. columnsControl ниже).
+  const headerSlot = useHeaderSlot();
+
+  // Записать выбор колонок при размонтировании, если меню закрыть не успели
+  // (навигация с открытым поповером). Guard по dirty — внутри хука.
+  const persistRef = useRef(columnConfig.persistIfDirty);
+  persistRef.current = columnConfig.persistIfDirty;
+  useEffect(() => () => persistRef.current(), []);
+
+  // Известные (не-private) поля модели из /fields. Пока грузятся — null.
+  const knownFieldNames = allFields
+    ? new Set(allFields.map(f => f.name))
+    : null;
+
+  // Видимые колонки, очищенные от неизвестных/приватных полей. private-поля
+  // (password_hash и т.п.) больше не отдаются в /fields, и их НЕЛЬЗЯ
+  // запрашивать в search — иначе 422 и пустой список (а с ним пропадёт и
+  // тулбар с «шестерёнкой», чинить нечем). Такое возможно из устаревшего
+  // сохранённого набора, где private-поле осталось с прошлых версий.
+  const selectedColumns = knownFieldNames
+    ? columnConfig.selected.filter(n => knownFieldNames.has(n))
+    : columnConfig.selected;
+
+  // Запрашиваем всё, что нужно вью (fieldsList: видимые по умолчанию +
+  // скрытые «помощники» для кастомных рендеров) ПЛЮС добавленные
+  // пользователем колонки. Скрытие дефолтной колонки не убирает её из
+  // запроса — так кастомные рендеры соседних колонок не ломаются.
+  // Пользовательские колонки добавляем только когда набор полей известен
+  // (allFields загружен) — чтобы устаревшее private-поле не улетело в search.
+  const requestFields = Array.from(
+    new Set([...fieldsList, ...(knownFieldNames ? selectedColumns : [])]),
+  );
+
   const { data, refetch } = useFilteredSearchQuery({
     ...props,
     start: (page - 1) * pageSize,
     end: (page - 1) * pageSize + pageSize,
     sort: (sortStatus?.columnAccessor as string) || props.sort || 'id',
     order: sortStatus?.direction || props.order || 'asc',
-    fields: fieldsList,
+    fields: requestFields,
     // filter (props.filter) приходит через ...props выше; stateFilter
     // и общий фильтр вью добавляет useFilteredSearchQuery.
   }) as TypedUseQueryHookResult<
@@ -193,11 +251,22 @@ export const List = <RecordType extends FaraRecord>({
     return null;
   }
 
-  for (const field of data.fields) {
-    // Пропускаем скрытые поля
-    if (hiddenFields.has(field.name)) {
-      continue;
+  // Метаданные по имени поля: приоритет — из ответа поиска (data.fields),
+  // добор — из полного списка полей модели (allFields), чтобы только что
+  // добавленная колонка появилась сразу, не дожидаясь рефетча.
+  const metaByName = new Map<string, GetListField>();
+  for (const f of data.fields) metaByName.set(f.name, f);
+  if (allFields) {
+    for (const f of allFields) {
+      if (!metaByName.has(f.name)) metaByName.set(f.name, f as GetListField);
     }
+  }
+
+  // Колонки строим в порядке пользовательского выбора (selectedColumns —
+  // уже очищен от приватных/неизвестных полей).
+  for (const fieldName of selectedColumns) {
+    const field = metaByName.get(fieldName);
+    if (!field) continue; // метаданные ещё не подгрузились
 
     const obj: DataTableColumn = {
       // accessorKey: field.name.toLowerCase(),
@@ -277,8 +346,22 @@ export const List = <RecordType extends FaraRecord>({
     });
   }
 
+  // Контрол настройки колонок. Живёт в шапке вида (портал в слот
+  // ViewWrapper), а вне ViewWrapper (слота нет) — в тулбаре списка.
+  const columnsMenu = (
+    <ColumnsMenu
+      model={props.model}
+      selected={selectedColumns}
+      isCustom={columnConfig.isCustom}
+      onChange={columnConfig.setDraft}
+      onReset={columnConfig.reset}
+      onClose={columnConfig.persistIfDirty}
+    />
+  );
+
   return (
     <>
+      {headerSlot && createPortal(columnsMenu, headerSlot)}
       <Toolbar
         selectedRecords={selectedRecords}
         model={props.model}
@@ -286,6 +369,7 @@ export const List = <RecordType extends FaraRecord>({
         massActions={massActions}
         extraActions={toolbarActions}
         onClearSelection={() => setSelectedRecords([])}
+        columnsControl={headerSlot ? undefined : columnsMenu}
       />
       <DataTable
         minHeight={200}

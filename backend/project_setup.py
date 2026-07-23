@@ -50,6 +50,9 @@ from backend.base.crm.attachments.models.attachments_cache import (
 )
 
 from backend.base.system.saved_filters.models.saved_filter import SavedFilter
+from backend.base.system.view_settings.models.column_setting import (
+    ColumnSetting,
+)
 from backend.base.crm.sales.models.sale import Sale
 from backend.base.crm.sales.models.sale_line import SaleLine
 from backend.base.crm.partners.models.partners import Partner
@@ -181,6 +184,7 @@ from backend.base.crm.languages.app import LanguageApp
 from backend.base.crm.auth_token.app import AuthTokenApp
 from backend.base.system.administration.app import AdministrationApp
 from backend.base.system.saved_filters.app import SavedFiltersApp
+from backend.base.system.view_settings.app import ViewSettingsApp
 from backend.base.crm.users.app import UserApp
 from backend.base.crm.security.app import SecurityApp
 from backend.base.crm.attachments.app import AttachmentsApp
@@ -246,6 +250,7 @@ class Models(ModelsCore, ExtensibleMixin):
     # users
     user = User
     saved_filter = SavedFilter
+    column_setting = ColumnSetting
     language = Language
     company = Company
     partner = Partner
@@ -308,6 +313,7 @@ class Apps(AppsCore):
     users = UserApp()
     security = SecurityApp()
     saved_filters = SavedFiltersApp()
+    view_settings = ViewSettingsApp()
     attachments = AttachmentsApp()
     attachments_google = AttachmentsGoogleApp()
     attachments_yandex = AttachmentsYandexApp()
