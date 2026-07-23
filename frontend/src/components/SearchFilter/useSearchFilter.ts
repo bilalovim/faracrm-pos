@@ -15,6 +15,7 @@ import { FilterExpression, Triplet } from '@/services/api/crudTypes';
 import {
   useGetSavedFiltersQuery,
   useCreateSavedFilterMutation,
+  useUpdateSavedFilterMutation,
   useDeleteSavedFilterMutation,
   SavedFilterDTO,
 } from './savedFiltersApi';
@@ -62,6 +63,16 @@ function dtoToSavedFilter(
     operator: operator as any,
     value: resolvePlaceholder(value, userId),
   }));
+  // user_id — Many2one: бэк отдаёт скаляр id либо объект {id}. Извлекаем
+  // id защитно. null → системный глобальный фильтр (владельца нет).
+  const rawOwner = dto.user_id;
+  const ownerId =
+    rawOwner == null
+      ? null
+      : typeof rawOwner === 'object'
+        ? rawOwner.id
+        : rawOwner;
+  const isOwner = userId != null && ownerId != null && ownerId === userId;
   return {
     id: String(dto.id),
     name: dto.name,
@@ -69,6 +80,7 @@ function dtoToSavedFilter(
     createdAt: dto.created_at ? new Date(dto.created_at).getTime() : Date.now(),
     isGlobal: dto.is_global,
     isDefault: dto.is_default,
+    isOwner,
   };
 }
 
@@ -106,6 +118,7 @@ export function useSearchFilter({
     [allSavedFiltersData, model],
   );
   const [createFilter] = useCreateSavedFilterMutation();
+  const [updateFilter] = useUpdateSavedFilterMutation();
   const [deleteFilter] = useDeleteSavedFilterMutation();
 
   // Текущий пользователь — для подстановки {{user_id}} в filter_data.
@@ -338,6 +351,54 @@ export function useSearchFilter({
     [deleteFilter],
   );
 
+  // Закрепить/открепить фильтр «по умолчанию». Default эксклюзивен внутри
+  // модели среди СВОИХ фильтров: при закреплении снимаем флаг с остальных
+  // своих дефолтов этой модели (savedFilters уже отфильтрованы по текущей
+  // модели). Чужие/системные фильтры не трогаем — их update запрещён
+  // правилом на бэке.
+  const setFilterDefault = useCallback(
+    async (filterId: string, makeDefault: boolean) => {
+      try {
+        if (makeDefault) {
+          const others = savedFilters.filter(
+            f => f.id !== filterId && f.isDefault && f.isOwner,
+          );
+          await Promise.all(
+            others.map(f =>
+              updateFilter({
+                id: Number(f.id),
+                data: { is_default: false },
+              }).unwrap(),
+            ),
+          );
+        }
+        await updateFilter({
+          id: Number(filterId),
+          data: { is_default: makeDefault },
+        }).unwrap();
+      } catch (error) {
+        console.error('Failed to change default flag:', error);
+      }
+    },
+    [savedFilters, updateFilter],
+  );
+
+  // Сделать фильтр общим/личным (is_global). Общий виден коллегам
+  // (read-only), менять/снимать общий статус может только автор.
+  const setFilterGlobal = useCallback(
+    async (filterId: string, makeGlobal: boolean) => {
+      try {
+        await updateFilter({
+          id: Number(filterId),
+          data: { is_global: makeGlobal },
+        }).unwrap();
+      } catch (error) {
+        console.error('Failed to change global flag:', error);
+      }
+    },
+    [updateFilter],
+  );
+
   // Очистить историю недавних
   const clearRecentFilters = useCallback(() => {
     setRecentFilters([]);
@@ -398,6 +459,8 @@ export function useSearchFilter({
     applyFilterSet,
     saveCurrentFilters,
     deleteSavedFilter,
+    setFilterDefault,
+    setFilterGlobal,
     clearRecentFilters,
     quickSearch,
   };

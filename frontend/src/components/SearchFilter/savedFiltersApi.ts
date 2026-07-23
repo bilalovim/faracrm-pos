@@ -8,7 +8,10 @@ export interface SavedFilterDTO {
   name: string;
   model_name: string;
   filter_data: string; // JSON string
-  user_id?: number;
+  // Владелец-Many2one: бэк может отдать как скаляр id, так и объект
+  // {id, ...} — извлекаем id защитно (см. dtoToSavedFilter). null у
+  // системных глобальных фильтров (например «Мои файлы»).
+  user_id?: number | { id: number } | null;
   is_global: boolean;
   is_default: boolean;
   created_at?: string;
@@ -45,6 +48,7 @@ const savedFiltersApi = crudApi.injectEndpoints({
             'name',
             'model_name',
             'filter_data',
+            'user_id',
             'is_global',
             'is_default',
             'use_count',

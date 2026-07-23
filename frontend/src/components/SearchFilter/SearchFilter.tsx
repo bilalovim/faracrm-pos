@@ -92,6 +92,8 @@ export function SearchFilter({
     applyFilterSet,
     saveCurrentFilters,
     deleteSavedFilter,
+    setFilterDefault,
+    setFilterGlobal,
     clearRecentFilters,
     quickSearch,
   } = useSearchFilter({
@@ -306,6 +308,8 @@ export function SearchFilter({
           onApply={applyFilterSet}
           onSave={saveCurrentFilters}
           onDelete={deleteSavedFilter}
+          onSetDefault={setFilterDefault}
+          onSetGlobal={setFilterGlobal}
           onClearRecent={clearRecentFilters}
         />
 

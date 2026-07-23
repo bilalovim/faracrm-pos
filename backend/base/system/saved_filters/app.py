@@ -40,12 +40,21 @@ class SavedFiltersApp(App):
         Access rules для модели saved_filter.
 
         Цели:
-          1. Пользователь видит ТОЛЬКО фильтры, где он создатель,
-             либо глобальные (user_id IS NULL — кладутся через post_init,
-             например «Мои файлы» из attachments).
-          2. Пользователь может удалять ТОЛЬКО свои фильтры
-             (свои = user_id == текущий). Глобальные удалять нельзя —
-             у них user_id IS NULL, что не равно текущему id.
+          1. Пользователь видит фильтры, где он создатель, ИЛИ системные
+             глобальные (user_id IS NULL — кладутся через post_init,
+             например «Мои файлы» из attachments), ИЛИ ОБЩИЕ фильтры,
+             которыми поделились коллеги (is_global == True). Правила на
+             одну операцию объединяются через OR (см. Rule docstring),
+             поэтому три read-правила дают объединение этих условий.
+          2. Пользователь может обновлять и удалять ТОЛЬКО свои фильтры
+             (свои = user_id == текущий). Это защищает общий фильтр
+             коллеги: он виден всем (read), но менять/снимать общий статус
+             и удалять может только автор. Системные глобальные (user_id
+             IS NULL) не трогает никто из base_user.
+
+        Важно: правила создаются идемпотентно (create-if-missing по имени),
+        поэтому на уже развёрнутой базе новые read/update правила добавятся
+        при следующем старте, не ломая существующие.
         """
         from backend.base.crm.security.models.rules import Rule
 
@@ -77,6 +86,29 @@ class SavedFiltersApp(App):
                 "perm_create": False,
                 "perm_read": True,
                 "perm_update": False,
+                "perm_delete": False,
+            },
+            {
+                # Общие фильтры коллег: видны всем (read-only для не-автора).
+                # ORed с правилом выше → пользователь видит свои + системные
+                # глобальные + расшаренные коллегами.
+                "name": "User can read shared saved filters",
+                "domain": [("is_global", "=", True)],
+                "perm_create": False,
+                "perm_read": True,
+                "perm_update": False,
+                "perm_delete": False,
+            },
+            {
+                # Менять фильтр (в т.ч. снимать/ставить is_global, is_default)
+                # может ТОЛЬКО автор. Без этого правила update был бы не
+                # ограничен (ACL FULL, нет rule → пустой domain → все строки),
+                # и коллега мог бы переписать чужой общий фильтр.
+                "name": "User can update only own saved filters",
+                "domain": [("user_id", "=", "{{user_id}}")],
+                "perm_create": False,
+                "perm_read": False,
+                "perm_update": True,
                 "perm_delete": False,
             },
             {

@@ -33,6 +33,10 @@ interface SavedFiltersMenuProps {
   onApply: (filter: SavedFilter) => void;
   onSave: (name: string) => void;
   onDelete: (filterId: string) => void;
+  /** Закрепить/открепить фильтр как «по умолчанию» */
+  onSetDefault: (filterId: string, isDefault: boolean) => void;
+  /** Сделать фильтр общим/личным (поделиться с коллегами) */
+  onSetGlobal: (filterId: string, isGlobal: boolean) => void;
   onClearRecent: () => void;
 }
 
@@ -44,6 +48,8 @@ export function SavedFiltersMenu({
   onApply,
   onSave,
   onDelete,
+  onSetDefault,
+  onSetGlobal,
   onClearRecent,
 }: SavedFiltersMenuProps) {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
@@ -149,20 +155,62 @@ export function SavedFiltersMenu({
                         color="var(--mantine-color-green-6)"
                       />
                     ) : (
-                      <IconStar size={14} />
+                      <IconBookmark size={14} />
                     )
                   }
                   rightSection={
-                    <ActionIcon
-                      size="xs"
-                      variant="subtle"
-                      color="red"
-                      onClick={e => {
-                        e.stopPropagation();
-                        onDelete(filter.id);
-                      }}>
-                      <IconTrash size={12} />
-                    </ActionIcon>
+                    // Управлять фильтром (закрепить/сделать общим/удалить)
+                    // может только автор. Чужие общие фильтры — read-only:
+                    // применить можно (клик по строке), изменить нельзя.
+                    filter.isOwner ? (
+                      <Group gap={2} wrap="nowrap">
+                        <ActionIcon
+                          size="xs"
+                          variant="subtle"
+                          color={filter.isDefault ? 'yellow' : 'gray'}
+                          title={
+                            filter.isDefault
+                              ? 'Открепить (убрать фильтр по умолчанию)'
+                              : 'Закрепить как фильтр по умолчанию'
+                          }
+                          onClick={e => {
+                            e.stopPropagation();
+                            onSetDefault(filter.id, !filter.isDefault);
+                          }}>
+                          {filter.isDefault ? (
+                            <IconStarFilled size={12} />
+                          ) : (
+                            <IconStar size={12} />
+                          )}
+                        </ActionIcon>
+                        <ActionIcon
+                          size="xs"
+                          variant="subtle"
+                          color={filter.isGlobal ? 'green' : 'gray'}
+                          title={
+                            filter.isGlobal
+                              ? 'Сделать личным (убрать из общих)'
+                              : 'Сделать общим (поделиться с коллегами)'
+                          }
+                          onClick={e => {
+                            e.stopPropagation();
+                            onSetGlobal(filter.id, !filter.isGlobal);
+                          }}>
+                          <IconWorld size={12} />
+                        </ActionIcon>
+                        <ActionIcon
+                          size="xs"
+                          variant="subtle"
+                          color="red"
+                          title="Удалить"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onDelete(filter.id);
+                          }}>
+                          <IconTrash size={12} />
+                        </ActionIcon>
+                      </Group>
+                    ) : undefined
                   }
                   onClick={() => onApply(filter)}>
                   <Group

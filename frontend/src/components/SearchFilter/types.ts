@@ -74,6 +74,9 @@ export interface SavedFilter {
   createdAt: number;
   isGlobal?: boolean;
   isDefault?: boolean;
+  /** Текущий пользователь — автор фильтра. Только автор может
+   *  закреплять/делать общим/удалять фильтр (см. SavedFiltersMenu). */
+  isOwner?: boolean;
 }
 
 // Предустановленный фильтр (из кода)
