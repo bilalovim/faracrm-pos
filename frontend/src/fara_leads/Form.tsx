@@ -36,7 +36,7 @@ export function ViewFormLeads(props: ViewFormProps) {
           <Field name="type" label="Тип" />
         </FormRow>
         <FormRow cols={2}>
-          <Field name="partner_id" label="Партнёр" />
+          <Field name="partner_id" label="Партнёр" quickCreate />
           {/* Контакты партнёра: parentField="partner_id" — владелец берётся
               из partner_id лида; фильтр контактов (partner_id) — из метаданных
               One2many. Здесь же иконка перехода в чат с партнёром. */}

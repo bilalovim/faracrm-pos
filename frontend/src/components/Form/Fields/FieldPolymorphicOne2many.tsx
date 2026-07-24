@@ -27,6 +27,7 @@ import {
 import type { GalleryItem, AttachmentData } from '@/components/Attachment';
 import classes from './FieldPolymorphicOne2many.module.css';
 import { downloadAttachment, downloadBase64 } from '@/utils/attachmentUrls';
+import { useTranslation } from 'react-i18next';
 
 interface AttachmentFile {
   id?: number;
@@ -64,6 +65,7 @@ export const FieldPolymorphicOne2many = <RecordType extends FaraRecord>({
   columns = 4,
 }: FieldPolymorphicOne2manyProps) => {
   const form = useFormContext();
+  const { t } = useTranslation('common');
   const { id } = useParams<{ id: string }>();
   const theme = useMantineTheme();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -359,12 +361,13 @@ export const FieldPolymorphicOne2many = <RecordType extends FaraRecord>({
 
             <div>
               <Text size="sm" inline>
-                {isUploading
-                  ? 'Загрузка...'
-                  : 'Перетащите файлы сюда или нажмите для выбора'}
+                {isUploading ? t('loading') : t('dropzone.dropFiles')}
               </Text>
               <Text size="xs" c="dimmed" inline mt={7}>
-                Максимум {maxFiles} файлов, до {formatFileSize(maxSize)} каждый
+                {t('dropzone.maxFilesAndSize', {
+                  files: maxFiles,
+                  size: formatFileSize(maxSize),
+                })}
               </Text>
             </div>
           </Group>

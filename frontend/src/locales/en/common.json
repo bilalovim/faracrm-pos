@@ -11,6 +11,8 @@
   "save": "Save",
   "cancel": "Cancel",
   "create": "Create",
+  "createNamed": "Create «{{name}}»",
+  "createAndFill": "Create and fill…",
   "delete": "Delete",
   "edit": "Edit",
   "search": "Search...",
@@ -103,5 +105,14 @@
     "selectPartnerFirst": "Select a partner first",
     "selectPartnerHint": "Contacts are stored on the selected partner",
     "pressPlusToAdd": "Press «+» to add a contact"
+  },
+  "dropzone": {
+    "dropFile": "Drag a file here or click to select",
+    "dropFiles": "Drag files here or click to select",
+    "dropFileShort": "Drag a file or click",
+    "releaseFile": "Release to drop",
+    "maxSize": "Maximum size: {{size}}",
+    "maxSizeShort": "Max: {{size}}",
+    "maxFilesAndSize": "Up to {{files}} files, {{size}} each"
   }
 }

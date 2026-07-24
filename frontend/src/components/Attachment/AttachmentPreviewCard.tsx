@@ -17,6 +17,7 @@
  */
 import { useState, useRef, ChangeEvent, DragEvent } from 'react';
 import { useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Paper,
   Group,
@@ -68,6 +69,7 @@ export function AttachmentPreviewCard({
   maxSize = DEFAULT_MAX_SIZE,
 }: AttachmentPreviewCardProps = {}) {
   const form = useFormContext();
+  const { t } = useTranslation('common');
   const params = useParams<{ id: string }>();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -257,13 +259,13 @@ export function AttachmentPreviewCard({
             )}
             <Text size="md" fw={500}>
               {isUploading
-                ? 'Загрузка...'
+                ? t('loading')
                 : isDragOver
-                  ? 'Отпустите файл'
-                  : 'Перетащите файл или нажмите'}
+                  ? t('dropzone.releaseFile')
+                  : t('dropzone.dropFileShort')}
             </Text>
             <Text size="xs" c="dimmed">
-              Максимум: {formatFileSize(maxSize)}
+              {t('dropzone.maxSizeShort', { size: formatFileSize(maxSize) })}
             </Text>
             {error && (
               <Text size="sm" c="red">

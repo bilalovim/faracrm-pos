@@ -82,7 +82,7 @@ export function FieldContacts({
 }: FieldContactsProps) {
   const form = useFormContext();
   const { t } = useTranslation('common');
-  const { fields: fieldsServer } = useContext(FormFieldsContext);
+  const { fields: fieldsServer, isCreateForm } = useContext(FormFieldsContext);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [deleteBulk] = useDeleteBulkMutation();
@@ -101,9 +101,14 @@ export function FieldContacts({
       : typeof parentValue === 'number'
         ? parentValue
         : null
-    : id
-      ? Number(id)
-      : null;
+    : // В режиме создания записи id из URL брать НЕЛЬЗЯ: форма создания может
+      // быть открыта в попапе поверх маршрута с чужим id (…/leads/5 → попап
+      // создания партнёра). Иначе новый партнёр «унаследует» контакты записи 5.
+      isCreateForm
+      ? null
+      : id
+        ? Number(id)
+        : null;
 
   // Поле модели contact для фильтра/создания (partner_id / user_id) — берём
   // из метаданных One2many (relation_table_field), а НЕ из parentField:

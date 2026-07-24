@@ -1,7 +1,16 @@
-import { Combobox, InputBase, useCombobox } from '@mantine/core';
-import { ReactElement, useContext, useEffect, useState, useMemo } from 'react';
-import { IconChevronDown, IconPlus } from '@tabler/icons-react';
+import { Combobox, InputBase, useCombobox, Modal } from '@mantine/core';
+import {
+  ReactElement,
+  useContext,
+  useEffect,
+  useState,
+  useMemo,
+  Suspense,
+} from 'react';
+import { IconChevronDown } from '@tabler/icons-react';
 import { notifications } from '@mantine/notifications';
+import { useDisclosure } from '@mantine/hooks';
+import { useTranslation } from 'react-i18next';
 import {
   BaseQueryFn,
   TypedUseQueryHookResult,
@@ -16,8 +25,11 @@ import {
 } from '@/services/api/crudTypes';
 import { FieldWrapper } from './FieldWrapper';
 import { LabelPosition } from '../FormSettingsContext';
+import { getModelViews } from '@/route/Routers';
+import LoadingScreen from '../../LoadingScreen/LoadingScreen';
 
 const QUICK_CREATE_VALUE = '__quick_create__';
+const QUICK_CREATE_MODAL_VALUE = '__quick_create_modal__';
 
 interface FieldMany2oneProps {
   name: string;
@@ -67,6 +79,18 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
   const [createRecord] = useCreateMutation();
   const createField =
     quickCreateField || (displayField !== 'id' ? displayField : 'name');
+
+  const { t } = useTranslation('common');
+  const [createOpened, { open: openCreate, close: closeCreate }] =
+    useDisclosure(false);
+  // Полноценная форма связанной модели для попапа «Создать и заполнить…».
+  // RelatedForm — lazy-компонент (getModelViews), рендерим в Suspense.
+  // Опцию показываем только если у модели есть зарегистрированная форма.
+  const relatedViews = useMemo(
+    () => getModelViews(relatedModel),
+    [relatedModel],
+  );
+  const RelatedForm = relatedViews?.form;
 
   // Вычисляем домен - статичный или через функцию
   const filterDomain = useMemo((): Triplet[] => {
@@ -132,6 +156,9 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
   );
   const showQuickCreate =
     quickCreate && !!relatedModel && !!trimmedSearch && !hasExactMatch;
+  // Попап доступен всегда, когда включён quickCreate и у модели есть форма
+  // (даже без введённого текста — можно открыть пустую форму и заполнить).
+  const showCreateModal = quickCreate && !!relatedModel && !!RelatedForm;
 
   const selectRecord = (record: FaraRecord) => {
     if (onchangeFields?.includes(name) && handleFieldChange) {
@@ -175,6 +202,12 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
             position="bottom-start"
             withArrow
             onOptionSubmit={async val => {
+              if (val === QUICK_CREATE_MODAL_VALUE) {
+                // «Создать и заполнить…» — открываем полную форму в модалке.
+                combobox.closeDropdown();
+                openCreate();
+                return;
+              }
               if (val === QUICK_CREATE_VALUE) {
                 try {
                   const created = await createRecord({
@@ -244,27 +277,33 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
                 }}
                 placeholder={'Поиск...'}
               />
-              <Combobox.Options>
+              {/* Ограничение высоты со скроллом обязательно: без него список
+                  (limit=10 + пункты «Создать…») вырастает высоким, Mantine
+                  флипает дропдаун вверх, когда снизу мало места, и верх
+                  списка уезжает за край экрана. Тот же приём в InlineCell. */}
+              <Combobox.Options style={{ maxHeight: 240, overflowY: 'auto' }}>
                 {isLoading ? (
                   <Combobox.Empty>Загрузка...</Combobox.Empty>
                 ) : options && !!options.length ? (
                   options
-                ) : !showQuickCreate ? (
+                ) : !showQuickCreate && !showCreateModal ? (
                   <Combobox.Empty>Ничего не найдено</Combobox.Empty>
                 ) : null}
                 {showQuickCreate && (
                   <Combobox.Option
                     value={QUICK_CREATE_VALUE}
                     key={QUICK_CREATE_VALUE}>
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        color: 'var(--mantine-color-blue-6)',
-                      }}>
-                      <IconPlus size={14} />
-                      Создать «{trimmedSearch}»
+                    <span style={{ color: 'var(--mantine-color-blue-6)' }}>
+                      {t('createNamed', { name: trimmedSearch })}
+                    </span>
+                  </Combobox.Option>
+                )}
+                {showCreateModal && (
+                  <Combobox.Option
+                    value={QUICK_CREATE_MODAL_VALUE}
+                    key={QUICK_CREATE_MODAL_VALUE}>
+                    <span style={{ color: 'var(--mantine-color-blue-6)' }}>
+                      {t('createAndFill')}
                     </span>
                   </Combobox.Option>
                 )}
@@ -272,6 +311,27 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
             </Combobox.Dropdown>
           </Combobox>
         </FieldWrapper>
+      )}
+
+      {/* Попап «Создать и заполнить…»: полноценная форма связанной модели.
+          onCreated возвращает созданную запись → сразу подставляем её
+          значением поля; ButtonCreate внутри сам закрывает модалку. */}
+      {showCreateModal && RelatedForm && (
+        <Modal
+          opened={createOpened}
+          onClose={closeCreate}
+          title={`${t('create')}: ${displayLabel}`}
+          centered
+          size="90%"
+          styles={{ content: { maxWidth: 1100 } }}>
+          <Suspense fallback={<LoadingScreen />}>
+            <RelatedForm
+              isCreateForm
+              onCreated={(record: FaraRecord) => selectRecord(record)}
+              modalClose={closeCreate}
+            />
+          </Suspense>
+        </Modal>
       )}
     </>
   );

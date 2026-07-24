@@ -11,6 +11,7 @@ import {
 } from '@/components/Attachment';
 import classes from './FieldPolymorphicMany2one.module.css';
 import { downloadAttachment, downloadBase64 } from '@/utils/attachmentUrls';
+import { useTranslation } from 'react-i18next';
 
 interface FieldPolymorphicMany2oneProps {
   name: string;
@@ -29,6 +30,7 @@ export const FieldPolymorphicMany2one = <RecordType extends FaraRecord>({
   ...props
 }: FieldPolymorphicMany2oneProps) => {
   const form = useFormContext();
+  const { t } = useTranslation('common');
   const { id } = useParams<{ id: string }>();
   const theme = useMantineTheme();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -230,16 +232,16 @@ export const FieldPolymorphicMany2one = <RecordType extends FaraRecord>({
               <IconFile size={50} stroke={1.5} color={theme.colors.gray[5]} />
             )}
 
-            <div>
-              <Text size="sm" inline>
-                {isUploading
-                  ? 'Загрузка...'
-                  : 'Перетащите файл сюда или нажмите для выбора'}
-              </Text>
-              <Text size="xs" c="dimmed" inline mt={7}>
-                Максимальный размер: {formatFileSize(maxSize)}
-              </Text>
-            </div>
+            <Stack align="center" ta="center" gap={4}>
+              <div>
+                <Text size="sm" inline>
+                  {isUploading ? t('loading') : t('dropzone.dropFile')}
+                </Text>
+                <Text size="xs" c="dimmed" inline mt={7}>
+                  {t('dropzone.maxSize', { size: formatFileSize(maxSize) })}
+                </Text>
+              </div>
+            </Stack>
           </Group>
         </Box>
       )}

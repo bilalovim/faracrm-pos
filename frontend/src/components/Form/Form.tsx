@@ -62,6 +62,7 @@ export const Form = <RecordType extends FaraRecord>({
   parentFieldName,
   parentForm,
   modalClose,
+  onCreated,
   children,
   parentId,
   relatedFieldO2M,
@@ -76,6 +77,8 @@ export const Form = <RecordType extends FaraRecord>({
   parentId?: number;
   relatedFieldO2M?: string;
   modalClose?: () => void;
+  /** Быстрое создание Many2one из попапа: вернуть созданную запись. */
+  onCreated?: (record: FaraRecord) => void;
   children: React.ReactNode;
   labelPosition?: LabelPosition;
   labelWidth?: number | string;
@@ -267,8 +270,16 @@ export const Form = <RecordType extends FaraRecord>({
       setFields: setFieldsServer,
       handleFieldChange,
       onchangeFields,
+      isCreateForm,
     }),
-    [model, fieldsServer, setFieldsServer, handleFieldChange, onchangeFields],
+    [
+      model,
+      fieldsServer,
+      setFieldsServer,
+      handleFieldChange,
+      onchangeFields,
+      isCreateForm,
+    ],
   );
 
   // Mobile detection для панели: Drawer вместо inline
@@ -295,6 +306,7 @@ export const Form = <RecordType extends FaraRecord>({
                   parentForm={parentForm}
                   parentId={parentId}
                   modalClose={modalClose}
+                  onCreated={onCreated}
                   actions={actions}
                   activePanel={activePanel}
                   onTogglePanel={showPanels ? handleTogglePanel : undefined}

@@ -1,10 +1,28 @@
+/* Контейнер поля. container-type включает container queries: верстка
+   подстраивается под РЕАЛЬНУЮ ширину колонки (модалка, боковая панель),
+   а не под ширину окна. Обычные медиазапросы этого не умеют — поэтому
+   в попапе поля сжимались, хотя само окно широкое. */
+.container {
+  width: 100%;
+  container-type: inline-size;
+}
+
 .wrapper {
   width: 100%;
 }
 
+/* Ширина лейбла приходит из настроек формы через CSS-переменную, а не
+   инлайн-стилем: инлайн нельзя переопределить в container query. */
+.labelBox {
+  width: var(--fw-label-width);
+  min-width: var(--fw-label-width);
+  max-width: var(--fw-label-width);
+  flex-shrink: 0;
+  text-align: right;
+}
+
 .labelContainer {
   padding-top: 8px; /* выравнивание с input */
-  flex-shrink: 0;
 }
 
 .label {
@@ -26,6 +44,29 @@
 .fieldContainer {
   flex: 1;
   min-width: 0; /* для корректного overflow */
+}
+
+/* Узкая колонка — лейбл переезжает НАД полем, инпут занимает всю ширину.
+   Без этого фиксированная ширина лейбла съедала место и текст в инпуте
+   обрезался («Administr…»). Селекторы через .container — чтобы перебить
+   по специфичности переменные Mantine Group (--group-gap/--group-align). */
+@container (max-width: 380px) {
+  .container .wrapper {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .container .labelBox {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    text-align: left;
+  }
+
+  .container .labelContainer {
+    padding-top: 0;
+  }
 }
 
 /* Курсор для Switch */

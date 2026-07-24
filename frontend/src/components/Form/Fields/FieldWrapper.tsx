@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, CSSProperties } from 'react';
 import { Box, Text, Group, Stack } from '@mantine/core';
 import { useFormSettings, LabelPosition } from '../FormSettingsContext';
 import classes from './FieldWrapper.module.css';
@@ -63,29 +63,41 @@ export function FieldWrapper({
   }
 
   // position === 'left'
+  // Ширину лейбла отдаём CSS-переменной, а не инлайн-стилем: инлайн нельзя
+  // переопределить в container query, когда колонка узкая (см. .module.css).
+  // Выравнивание лейбла вправо тоже переехало в CSS (было ta="right").
+  const labelWidthCss = typeof width === 'number' ? `${width}px` : width;
+
   return (
-    <Group gap="md" align={align} wrap="nowrap" className={classes.wrapper}>
-      <Box
-        className={align === 'center' ? undefined : classes.labelContainer}
-        style={{ width, minWidth: width, maxWidth: width }}>
-        <Text size="sm" fw={500} className={classes.label} ta="right">
-          {label}
-          {required && <span className={classes.required}> *</span>}
-        </Text>
-        {description && (
-          <Text size="xs" c="dimmed" ta="right">
-            {description}
+    <Box
+      className={classes.container}
+      style={{ '--fw-label-width': labelWidthCss } as CSSProperties}>
+      <Group gap="md" align={align} wrap="nowrap" className={classes.wrapper}>
+        <Box
+          className={
+            align === 'center'
+              ? classes.labelBox
+              : `${classes.labelBox} ${classes.labelContainer}`
+          }>
+          <Text size="sm" fw={500} className={classes.label}>
+            {label}
+            {required && <span className={classes.required}> *</span>}
           </Text>
-        )}
-      </Box>
-      <Box className={classes.fieldContainer}>
-        {children}
-        {error && (
-          <Text size="xs" c="red" mt={4}>
-            {error}
-          </Text>
-        )}
-      </Box>
-    </Group>
+          {description && (
+            <Text size="xs" c="dimmed">
+              {description}
+            </Text>
+          )}
+        </Box>
+        <Box className={classes.fieldContainer}>
+          {children}
+          {error && (
+            <Text size="xs" c="red" mt={4}>
+              {error}
+            </Text>
+          )}
+        </Box>
+      </Group>
+    </Box>
   );
 }

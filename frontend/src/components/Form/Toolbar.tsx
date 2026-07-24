@@ -21,6 +21,7 @@ export const Toolbar = <RecordType extends FaraRecord>({
   parentId,
   relatedFieldO2M,
   modalClose,
+  onCreated,
   actions,
   activePanel,
   onTogglePanel,
@@ -34,6 +35,7 @@ export const Toolbar = <RecordType extends FaraRecord>({
   parentId?: number;
   relatedFieldO2M?: string;
   modalClose?: () => void;
+  onCreated?: (record: FaraRecord) => void;
   actions?: ReactNode;
   activePanel?: PanelType;
   onTogglePanel?: (panel: PanelType) => void;
@@ -99,6 +101,7 @@ export const Toolbar = <RecordType extends FaraRecord>({
               modalClose={modalClose}
               parentId={parentId}
               relatedFieldO2M={relatedFieldO2M}
+              onCreated={onCreated}
             />
           ) : (
             !!id && (

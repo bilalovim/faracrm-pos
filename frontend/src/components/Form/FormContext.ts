@@ -15,6 +15,10 @@ export interface FormFieldsContextType {
   handleFieldChange?: (fieldName: string, value: any) => Promise<void>;
   /** Поля с onchange обработчиками */
   onchangeFields?: string[];
+  /** Форма в режиме создания. Нужно дочерним полям (напр. FieldContacts),
+   *  чтобы НЕ подхватывать route-id как id текущей записи, когда форма
+   *  создания открыта в попапе поверх маршрута с id (…/leads/5). */
+  isCreateForm?: boolean;
 }
 
 export const FormFieldsContext = createContext<FormFieldsContextType>({

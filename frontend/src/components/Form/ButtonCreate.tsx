@@ -55,6 +55,7 @@ export function ButtonCreate({
   parentId,
   relatedFieldO2M,
   modalClose,
+  onCreated,
 }: {
   model: string;
   parentFieldName?: string;
@@ -62,6 +63,13 @@ export function ButtonCreate({
   parentId?: number;
   relatedFieldO2M?: string;
   modalClose?: () => void;
+  /**
+   * Если задан — форма работает в режиме «создать и вернуть» (быстрое
+   * создание Many2one из попапа): после реального create вызываем onCreated
+   * с созданной записью и закрываем модалку, НЕ переходя на её форму.
+   * Без onCreated поведение прежнее (reset + navigate на новую запись).
+   */
+  onCreated?: (record: FaraRecord) => void;
 }) {
   const { fields: fieldsServer } = useContext(FormFieldsContext);
   const { t } = useTranslation('common');
@@ -212,8 +220,18 @@ export function ButtonCreate({
               }
             }
 
-            form.reset();
-            navigate(`/${model}/${data?.id}`);
+            if (onCreated) {
+              // Режим «создать и вернуть» (попап быстрого создания M2O):
+              // отдаём созданную запись вызывающему полю (оно подставит её
+              // значением) и закрываем модалку. valuesToCreate уже прошёл
+              // prepareValuesToSave (id удалён, M2O → числа), поэтому
+              // разворачиваем его поверх id — для отображения хватит name.
+              onCreated({ id: data.id, ...valuesToCreate });
+              modalClose?.();
+            } else {
+              form.reset();
+              navigate(`/${model}/${data?.id}`);
+            }
           }
           // НЕ переходим на список при ошибке. RTK Query вернул { error }
           // (например, бэк отдал 400 при нарушении бизнес-инварианта —
