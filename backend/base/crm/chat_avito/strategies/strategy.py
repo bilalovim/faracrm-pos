@@ -443,19 +443,19 @@ class AvitoStrategy(ChatStrategyBase):
 
     def _counterparty_user(
         self, connector: "ChatConnector", info: dict | None
-    ) -> dict | None:
+    ):
         """Из info чата вернуть участника, отличного от нашего аккаунта.
 
         В Avito массив users содержит обоих участников (нас и клиента).
         Клиент — тот, чей id не равен нашему external_account_id.
         """
         if not info:
-            return None
+            return {}
         me = str(connector.external_account_id or "")
         for user in info.get("users") or []:
             if str(user.get("id")) != me:
                 return user
-        return None
+        return {}
 
     async def get_item_title(
         self, connector: "ChatConnector", user_id, item_id, chat_id=None
@@ -523,7 +523,7 @@ class AvitoStrategy(ChatStrategyBase):
 
     #         return None
 
-    async def resolve_partner(
+    async def resolve_partner_id_and_name(
         self,
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
@@ -539,13 +539,13 @@ class AvitoStrategy(ChatStrategyBase):
         - Клиента определить не удалось → (None, None): сообщение пропускается,
           чтобы не завести партнёра/лид на наш аккаунт.
         """
-        me = str(connector.external_account_id or "")
         author = adapter.author_id
 
         # Участники чата (имя в webhook не приходит; отсюда же id клиента,
         # когда писали мы сами).
-        other = None
+        other = {}
         try:
+            # self.connector.external_account_id
             info = await self._get_chat_info(
                 connector, adapter.user_id, adapter.chat_id
             )
@@ -558,10 +558,8 @@ class AvitoStrategy(ChatStrategyBase):
             )
 
         # id клиента.
-        if author and author != me:
+        if adapter.is_from_external:
             client_id = author
-        elif other and other.get("id") is not None:
-            client_id = str(other.get("id"))
         else:
             logger.warning(
                 "Avito: outgoing message %s in chat %s — cannot resolve "
@@ -571,7 +569,7 @@ class AvitoStrategy(ChatStrategyBase):
             )
             return None, None
 
-        name = (other.get("name") if other else None) or client_id
+        name = other.get("name", client_id)
         return client_id, name
 
     async def get_self_account_id(self, connector: "ChatConnector") -> dict:

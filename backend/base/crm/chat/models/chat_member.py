@@ -18,6 +18,7 @@ from backend.base.crm.users.audit_mixin import AuditMixin
 
 if TYPE_CHECKING:
     from backend.base.crm.chat.models.chat import Chat
+    from backend.base.crm.users.models.users import User
     from backend.base.crm.chat.models.chat_connector import ChatConnector
 
 
@@ -151,8 +152,8 @@ class ChatMember(AuditMixin, MemberMixin):
         # Стаб для admin — НЕ сохраняется в БД, только для прохода
         # по коду (доступ к last_read_message_id и т.п.)
         stub = cls(
-            chat_id=chat_id,
-            user_id=user_id,
+            chat_id=Chat(id=chat_id),
+            user_id=User(id=user_id),
             is_admin=True,
             is_active=True,
             last_read_message_id=0,
@@ -189,8 +190,8 @@ class ChatMember(AuditMixin, MemberMixin):
             return member, False
         if is_admin:
             stub = cls(
-                chat_id=chat_id,
-                user_id=user_id,
+                chat_id=Chat(id=chat_id),
+                user_id=User(id=user_id),
                 is_admin=True,
                 is_active=True,
                 last_read_message_id=0,
@@ -212,8 +213,8 @@ class ChatMember(AuditMixin, MemberMixin):
         )
         if chats:
             reader_stub = cls(
-                chat_id=chat_id,
-                user_id=user_id,
+                chat_id=Chat(id=chat_id),
+                user_id=User(id=user_id),
                 is_admin=False,
                 is_active=True,
                 last_read_message_id=0,

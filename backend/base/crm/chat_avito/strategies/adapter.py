@@ -198,9 +198,9 @@ class AvitoMessageAdapter(ChatMessageAdapter):
         """
         skip_types = {
             "appCall",
-            "file",
-            "video",
-            "voice",
+            # "file",
+            # "video",
+            # "voice",
             "call",
             "system",
             "deleted",

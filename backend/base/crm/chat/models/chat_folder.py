@@ -43,71 +43,17 @@ def _default_current_user():
     return session.user_id if session else None
 
 
-# Встроенные глобальные папки (user_id IS NULL). Домены — обычные над chat.
-# ВНУТРЕННИЕ папки фильтруют is_internal=true: без этого условия внешние
-# (клиентские) чаты — chat_type='group', is_internal=false — попадали и во
-# внутренние «Все»/«Группы» (они уже показаны в секции «Внешние»).
-DEFAULT_GLOBAL_FOLDERS = [
-    {
-        "kind": "all",
-        "name": "Все",
-        "icon": "all",
-        "domain": [["is_internal", "=", True]],
-        "sequence": 0,
-    },
-    {
-        "kind": "direct",
-        "name": "Личные",
-        "icon": "direct",
-        "domain": [["chat_type", "=", "direct"], ["is_internal", "=", True]],
-        "sequence": 10,
-    },
-    {
-        "kind": "group",
-        "name": "Группы",
-        "icon": "group",
-        "domain": [
-            ["chat_type", "in", ["group", "channel"]],
-            ["is_internal", "=", True],
-        ],
-        "sequence": 20,
-    },
-    # Внешние (клиентские) чаты. Резолвятся get_chats по kind, НЕ доменом:
-    # членство ("Мои") и team-видимость ("Все") не выразить доменом над chat.
-    #   - external_all:  is_internal=false + (участник ИЛИ chat.team_id ∈ мои
-    #                    команды) — team-scoped обзор;
-    #   - external_mine: is_internal=false + только где я участник.
-    {
-        "kind": "external_all",
-        "name": "Все",
-        "icon": "external_all",
-        "domain": None,
-        "sequence": 30,
-    },
-    {
-        "kind": "external_mine",
-        "name": "Мои",
-        "icon": "external_mine",
-        "domain": None,
-        "sequence": 40,
-    },
-]
-
-
 class ChatFolder(AuditMixin, DotModel):
     """Папка чатов: сохранённый domain-фильтр над chat."""
 
     __table__ = "chat_folder"
-    # Auto-CRUD включён (/auto/chat_folder). Доступ — правила own + global
-    # (см. chat/app.py::_init_membership_rules).
 
     id: int = Integer(primary_key=True)
 
-    # Владелец. NULL = глобальная папка (видна всем). Кастомная — текущий юзер.
     user_id: "User | None" = Many2one(
         relation_table=lambda: env.models.user,
         default=_default_current_user,
-        description="Владелец папки (NULL = глобальная)",
+        description="Владелец папки. NULL - глобальная. Кастомная - текущий юзер.",
         index=True,
     )
 
@@ -133,41 +79,32 @@ class ChatFolder(AuditMixin, DotModel):
         index=True,
     )
 
-    # ------------------------------------------------------------------
-    # Глобальные папки создаются системой. N+1 нет: набор глобальный,
-    # а не per-user — несколько одиночных idempotent-проверок.
-    # ------------------------------------------------------------------
-
     @hybridmethod
     async def ensure_global_defaults(self) -> None:
         """Создать глобальные «Все»/«Личные»/«Группы», если их ещё нет."""
-        for spec in DEFAULT_GLOBAL_FOLDERS:
+
+        for folder in DEFAULT_GLOBAL_FOLDERS:
             existing = await self.search(
-                filter=[("user_id", "=", None), ("kind", "=", spec["kind"])],
+                filter=[
+                    ("user_id", "=", None),
+                    ("kind", "=", folder.kind),
+                ],
                 fields=["id"],
                 limit=1,
             )
             if existing:
                 continue
-            await self.create(
-                payload=env.models.chat_folder(
-                    user_id=None,
-                    name=spec["name"],
-                    icon=spec["icon"],
-                    sequence=spec["sequence"],
-                    domain=spec["domain"],
-                    kind=spec["kind"],
-                )
-            )
+            await self.create(payload=folder)
 
     @hybridmethod
     async def ensure_connector_folder(
         self,
         connector_id: int,
-        connector_name: str | None = None,
+        connector_name: str,
         sequence: int = 100,
     ) -> None:
         """Глобальная папка коннектора (idempotent по connector_id)."""
+
         existing = await self.search(
             filter=[
                 ("user_id", "=", None),
@@ -176,15 +113,68 @@ class ChatFolder(AuditMixin, DotModel):
             fields=["id"],
             limit=1,
         )
+
         if existing:
             return
+
         await self.create(
             payload=env.models.chat_folder(
                 user_id=None,
                 connector_id=env.models.chat_connector(id=connector_id),
-                name=connector_name or f"Коннектор {connector_id}",
+                name=connector_name,
                 icon="connector",
                 sequence=sequence,
                 domain=None,
             )
         )
+
+
+# Встроенные глобальные папки (user_id IS NULL). Домены — обычные над chat.
+# ВНУТРЕННИЕ папки фильтруют is_internal=true: без этого условия внешние
+# (клиентские) чаты — chat_type='group', is_internal=false — попадали и во
+# внутренние «Все»/«Группы» (они уже показаны в секции «Внешние»).
+DEFAULT_GLOBAL_FOLDERS = [
+    ChatFolder(
+        kind="all",
+        name="Все",
+        icon="all",
+        domain=[["is_internal", "=", True]],
+        sequence=0,
+    ),
+    ChatFolder(
+        kind="direct",
+        name="Личные",
+        icon="direct",
+        domain=[["chat_type", "=", "direct"], ["is_internal", "=", True]],
+        sequence=10,
+    ),
+    ChatFolder(
+        kind="group",
+        name="Группы",
+        icon="group",
+        domain=[
+            ["chat_type", "in", ["group", "channel"]],
+            ["is_internal", "=", True],
+        ],
+        sequence=20,
+    ),
+    # Внешние (клиентские) чаты. Резолвятся get_chats по kind, НЕ доменом:
+    # членство ("Мои") и team-видимость ("Все") не выразить доменом над chat.
+    #   - external_all:  is_internal=false + (участник ИЛИ chat.team_id ∈ мои
+    #                    команды) — team-scoped обзор;
+    #   - external_mine: is_internal=false + только где я участник.
+    ChatFolder(
+        kind="external_all",
+        name="Все",
+        icon="external_all",
+        domain=None,
+        sequence=30,
+    ),
+    ChatFolder(
+        kind="external_mine",
+        name="Мои",
+        icon="external_mine",
+        domain=None,
+        sequence=40,
+    ),
+]

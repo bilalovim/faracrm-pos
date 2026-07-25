@@ -33,48 +33,34 @@ class IncomingRoute(str, Enum):
     (личный и групповой) — адрес у них общий. Не менять местами.
     """
 
-    # Не поняли, КТО ИЗ ДВОИХ клиент: resolve_partner вернул (None, None).
-    #
-    # ЭТО НЕ «незнакомый отправитель» — незнакомый как раз обрабатывается и
-    # попадает в NEW_CHAT_NEW_PARTNER. Здесь мы не смогли определить
-    # контрагента ВООБЩЕ, и до создания контакта дело не доходит.
-    # Пример: Avito шлёт вебхук и на наши СОБСТВЕННЫЕ исходящие и не отличает
-    # нас от клиента в author_id — он лезет за участниками чата, и если не
-    # вышло, отдаёт пусто. Пропускаем, чтобы не завести партнёра и лид на наш
-    # же магазин.
-    SKIP_COUNTERPARTY_NOT_RESOLVED = "skip_counterparty_not_resolved"
+    # Адрес/тред уже привязан к чату (chat_external_chat). Основной путь.
+    ROUTED_BY_LINK = "routed_by_link"
 
     # Сообщение само сказало, куда лечь: «я ответ вон на те». Только email.
     ROUTED_BY_THREAD = "routed_by_thread"
 
-    # Адрес/тред уже привязан к чату (chat_external_chat). Основной путь.
-    ROUTED_BY_LINK = "routed_by_link"
-
     # Переписки нет, контакта раньше не было → завели партнёра и его чат.
-    NEW_CHAT_NEW_PARTNER = "new_chat_new_partner"
+    ROUTED_PARTNER_NEW = "routed_partner_new"
 
     # Переписки нет, но партнёр уже известен → открыли/нашли его чат.
-    NEW_CHAT_KNOWN_PARTNER = "new_chat_known_partner"
+    ROUTED_PARTNER_KNOWN = "routed_partner_known"
 
-    # Наш сотрудник написал на общий адрес, переписки с ним ещё нет. Класть
-    # некуда: адрес общий, конкретного чата он не выбрал. Партнёра и лида на
-    # сотрудника не заводим. Если МЫ написали первыми — сюда не дойдёт,
-    # сработает ROUTED_BY_THREAD/ROUTED_BY_LINK.
+    # Наш сотрудник написал на общий адрес, переписки с ним ещё нет.
     SKIP_OWN_USER = "skip_own_user"
 
-    # Контакт есть, но у него не заполнен ни партнёр, ни пользователь. XOR-
-    # констрейнта на модели нет, поэтому случай представим. Раньше здесь
-    # бросался ValueError — по решению владельца это тоже пропуск: одно битое
-    # сообщение не должно блокировать очередь коннектора.
-    SKIP_NO_PARTNER_NO_USER = "skip_no_partner_no_user"
+    # Контакт есть, но у него не заполнен ни партнёр, ни пользователь.
+    SKIP_ERROR_NO_PARTNER_NO_USER = "skip_error_no_partner_no_user"
+
+    # Не поняли, КТО ИЗ ДВОИХ клиент: resolve_partner вернул (None, None).
+    SKIP_ERROR_COUNTERPARTY = "skip_error_counterparty"
 
 
 # Исходы, при которых чата нет и обрабатывать нечего.
 _SKIP_ROUTES = frozenset(
     {
-        IncomingRoute.SKIP_COUNTERPARTY_NOT_RESOLVED,
+        IncomingRoute.SKIP_ERROR_COUNTERPARTY,
         IncomingRoute.SKIP_OWN_USER,
-        IncomingRoute.SKIP_NO_PARTNER_NO_USER,
+        IncomingRoute.SKIP_ERROR_NO_PARTNER_NO_USER,
     }
 )
 
@@ -208,41 +194,6 @@ class ChatStrategyBase(ABC):
             Tuple[external_message_id, external_chat_id]
         """
 
-    # async def chat_send_file(
-    #     self,
-    #     connector: "ChatConnector",
-    #     user_from: "ChatExternalAccount",
-    #     chat_id: str,
-    #     file_content: bytes,
-    #     filename: str,
-    #     mimetype: str,
-    #     caption: str | None = None,
-    # ) -> str | None:
-    #     """
-    #     Отправить файл/изображение.
-
-    #     Args:
-    #         connector: Экземпляр коннектора
-    #         user_from: Аккаунт отправителя
-    #         chat_id: ID внешнего чата
-    #         file_content: Содержимое файла в байтах
-    #         filename: Имя файла
-    #         mimetype: MIME-тип файла
-    #         caption: Подпись к файлу (опционально)
-
-    #     Returns:
-    #         external_message_id или None
-    #     """
-    #     # По умолчанию не поддерживается - стратегии переопределяют
-    #     logger.warning(
-    #         f"[{self.strategy_type}] chat_send_file not implemented"
-    #     )
-    #     return None
-
-    # ========================================================================
-    # Абстрактные методы (продолжение)
-    # ========================================================================
-
     @abstractmethod
     def create_message_adapter(
         self, connector: "ChatConnector", raw_message: dict
@@ -338,7 +289,7 @@ class ChatStrategyBase(ABC):
         env: "Environment",
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
-    ) -> bool:
+    ):
         """Проверить является ли сообщение дубликатом."""
         return await env.models.chat_external_message.exists(
             external_id=adapter.message_id,
@@ -367,15 +318,16 @@ class ChatStrategyBase(ABC):
         # сообщения, но в некоторых интеграциях (Avito) webhook приходит и на
         # наши исходящие — тогда клиента вычисляем из участников чата, а не из
         # author_id (это будет наш аккаунт).
-        counterparty_external_id, partner_display_name = (
-            await self.resolve_partner(connector, adapter)
+        # иногда имя также идет отдельным запросом
+        counterparty_external_id, counterparty_external_name = (
+            await self.resolve_partner_id_and_name(connector, adapter)
         )
         if not counterparty_external_id:
             logger.info(
                 "[%s] Message %s → %s",
                 self.strategy_type,
                 adapter.message_id,
-                IncomingRoute.SKIP_COUNTERPARTY_NOT_RESOLVED.value,
+                IncomingRoute.SKIP_ERROR_COUNTERPARTY.value,
             )
             return
 
@@ -386,7 +338,7 @@ class ChatStrategyBase(ABC):
                 connector=connector,
                 external_id=counterparty_external_id,
                 contact_value=counterparty_external_id,
-                display_name=partner_display_name,
+                display_name=counterparty_external_name,
                 raw=json.dumps(adapter.raw) if adapter.raw else None,
             )
         )
@@ -449,9 +401,9 @@ class ChatStrategyBase(ABC):
             )
             chat_id = chat.id
             route = (
-                IncomingRoute.NEW_CHAT_NEW_PARTNER
+                IncomingRoute.ROUTED_PARTNER_NEW
                 if created
-                else IncomingRoute.NEW_CHAT_KNOWN_PARTNER
+                else IncomingRoute.ROUTED_PARTNER_KNOWN
             )
             item_title, item_url = await self._fetch_item_info(
                 connector, adapter
@@ -475,7 +427,7 @@ class ChatStrategyBase(ABC):
             route = (
                 IncomingRoute.SKIP_OWN_USER
                 if contact.user_id
-                else IncomingRoute.SKIP_NO_PARTNER_NO_USER
+                else IncomingRoute.SKIP_ERROR_NO_PARTNER_NO_USER
             )
 
         # Одна строка на исход — по ней видно судьбу ЛЮБОГО сообщения.
@@ -1058,21 +1010,6 @@ class ChatStrategyBase(ABC):
             # Теперь у вас есть доступ и к mime_type, и к response.content
             return response.content, mime_type
 
-    # async def get_partner_name(
-    #     self, connector: "ChatConnector", user_id: str
-    # ) -> str | None:
-    #     """
-    #     Получить имя пользователя по его ID во внешней системе.
-
-    #     Args:
-    #         connector: Экземпляр коннектора
-    #         user_id: ID пользователя
-
-    #     Returns:
-    #         Имя пользователя или None
-    #     """
-    #     return None
-
     async def get_item_url(
         self, connector: "ChatConnector", user_id: str, item_id: str
     ) -> str | None:
@@ -1328,7 +1265,7 @@ class ChatStrategyBase(ABC):
             )
             return False
 
-    async def resolve_partner(
+    async def resolve_partner_id_and_name(
         self,
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",

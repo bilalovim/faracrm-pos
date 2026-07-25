@@ -300,7 +300,7 @@ class VkStrategy(ChatStrategyBase):
     # Определение отправителя (имя докручиваем через users.get)
     # ========================================================================
 
-    async def resolve_partner(
+    async def resolve_partner_id_and_name(
         self,
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
@@ -330,7 +330,8 @@ class VkStrategy(ChatStrategyBase):
                 full = " ".join(p for p in [first, last] if p).strip()
                 screen = user.get("screen_name")
                 if full and screen:
-                    name = f"{full} (@{screen})"
+                    # name = f"{full} (@{screen})"
+                    name = f"{full}"
                 else:
                     name = full or (f"@{screen}" if screen else None)
         except Exception as exc:  # noqa: BLE001

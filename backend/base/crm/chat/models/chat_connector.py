@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime
 from typing import TYPE_CHECKING, Self
 
-from ...users.audit_mixin import AuditMixin
+from backend.base.crm.users.audit_mixin import AuditMixin
 from backend.base.system.dotorm.dotorm.components.filter_parser import (
     FilterExpression,
 )
@@ -288,8 +288,7 @@ class ChatConnector(AuditMixin, DotModel):
         await self._ensure_outbox_account()
 
         # Авто-папка коннектора: ОДНА глобальная папка на коннектор
-        # (user_id IS NULL, видна всем). Никакого per-manager цикла — нет N+1
-        # и нет дублей по пользователям. Idempotent по connector_id.
+        # (user_id IS NULL, видна всем).
         try:
             await env.models.chat_folder.ensure_connector_folder(
                 self.id, self.name
