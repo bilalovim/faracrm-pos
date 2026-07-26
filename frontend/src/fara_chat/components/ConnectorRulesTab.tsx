@@ -9,7 +9,6 @@ import { registerExtension } from '@/shared/extensions';
  * Справка о том, как коннектор обрабатывает ВХОДЯЩИЕ сообщения: куда попадёт
  * сообщение, заведётся ли партнёр и лид. Правила одинаковы для ВСЕХ типов
  * коннекторов (логика живёт в общей входящей стратегии
- * backend/base/crm/chat/strategies/strategy.py::_process_incoming_message),
  * поэтому расширение регистрируется БЕЗ гейта по form.values.type — в отличие
  * от per-type расширений вида ViewFormConnector<Тип>.
  *
@@ -23,9 +22,6 @@ import { registerExtension } from '@/shared/extensions';
  * Расширения же рендерятся напрямую в TabContent (Form/Layout/FormTabs.tsx),
  * минуя эту фильтрацию, — здесь произвольный JSX работает.
  *
- * ВНИМАНИЕ ПРИ ПРАВКЕ ЛОГИКИ: таблица описывает поведение бэкенда и может с ним
- * разъехаться — она не генерируется из кода. Меняете _process_incoming_message
- * — поправьте и здесь.
  */
 export function ConnectorRulesTab() {
   const { t } = useTranslation('chat');

@@ -168,3 +168,140 @@ class Lead(AuditMixin, PolymorphicParentMixin):
                 "Lead %s: failed to subscribe user to chat: %s", self.id, exc
             )
         return result
+
+    @hybridmethod
+    async def create_or_get_for_chat(
+        self,
+        *,
+        connector: "ChatConnector",
+        partner: "Partner",
+        item_title: str = "",
+        item_url: str = "",
+        message_text: str = "",
+        author_name: str = "",
+        source_message_id: str = "",
+    ):
+        """Найти переиспользуемый или создать лид из входящего сообщения чата.
+
+        Раньше эта логика жила в ChatStrategyBase._get_or_create_lead — но
+        правило «другой website ⇒ другой лид», выбор имени лида и применение
+        правил маршрутизации (chat_routing_rule_lead) — это про лиды, а не про
+        транспорт чата. Пайплайн входящего теперь зовёт этот фабричный метод
+        (см. chat/strategies/incoming.py).
+
+        Логика:
+        - имя лида = item_title (заголовок объявления) или имя партнёра;
+        - ищем существующий лид по (partner_id, connector_id), самый свежий;
+        - если у найденного другой website (item_url) — клиент пишет по другому
+          объявлению, это другой лид, создаём новый;
+        - применяем правила chat_routing_rule_lead, если включено
+          connector.lead_distribution.
+
+        Возвращает запись лида (существующую или новую) либо None, если
+        партнёр-клиент не задан (без него создавать лид бессмысленно).
+        """
+        if not partner:
+            return None
+
+        # partner может быть "stub" (только id) — но .name сюда уже приходит
+        # загруженным из пайплайна; используем как раньше _get_or_create_lead.
+        partner_name = partner.name
+
+        item_title = (item_title or "").strip()
+        item_url = (item_url or "").strip()
+
+        # Ищем существующий лид по (partner_id, connector_id) — берём свежий.
+        existing_leads = await self.search(
+            filter=[
+                ("partner_id", "=", partner.id),
+                ("connector_id", "=", connector.id),
+            ],
+            fields=["id", "website", "name"],
+            sort="id",
+            order="DESC",
+            limit=1,
+        )
+        existing_lead = existing_leads[0] if existing_leads else None
+
+        # Другой website — это другой лид.
+        if (
+            existing_lead
+            and item_url
+            and existing_lead.website
+            and existing_lead.website != item_url
+        ):
+            existing_lead = None
+
+        if existing_lead:
+            # Обновим website, если он появился/сменился позже.
+            if item_url and existing_lead.website != item_url:
+                await existing_lead.update(env.models.lead(website=item_url))
+            return existing_lead
+
+        # Имя лида: заголовок объявления или имя партнёра.
+        fallback_name = (
+            partner_name
+            or author_name
+            or f"Lead {connector.name or connector.type}"
+        )
+        lead_name = item_title or fallback_name
+
+        # Правила маршрутизации (назначение менеджера/команды).
+        assigned_user = None
+        assigned_team = None
+        if connector.lead_distribution:
+            try:
+                # Структура payload (item_title, message_text, item_url,
+                # partner_name) — общая для всех каналов, чтобы админ применял
+                # одни и те же правила между системами.
+                routing_payload = {
+                    "item_title": item_title or "",
+                    "message_text": message_text or "",
+                    "item_url": item_url or "",
+                    "partner_name": partner_name or author_name or "",
+                }
+                rule_user, rule = (
+                    await env.models.chat_routing_rule_lead.find_user_for(
+                        connector.id,
+                        routing_payload,
+                    )
+                )
+                if rule_user:
+                    assigned_user = rule_user
+                    if rule and rule.team_id:
+                        assigned_team = rule.team_id
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Routing rule evaluation failed for connector %s: %s",
+                    connector.id,
+                    exc,
+                )
+
+        lead_payload = {
+            "name": lead_name,
+            "type": connector.lead_type or "opportunity",
+            "partner_id": partner,
+            "connector_id": env.models.chat_connector(id=connector.id),
+            "website": item_url or None,
+            "notes": (
+                f"Создан из сообщения {source_message_id} ({connector.name})"
+            ),
+        }
+        if assigned_user:
+            lead_payload["user_id"] = assigned_user
+        if assigned_team:
+            lead_payload["team_id"] = assigned_team
+        if connector.lead_stage_id:
+            lead_payload["stage_id"] = connector.lead_stage_id
+
+        new_lead = env.models.lead(**lead_payload)
+        new_lead.id = await self.create(payload=new_lead)
+        logger.info(
+            "Created lead %s (name=%r) for partner %s via connector %s (%s)",
+            new_lead.id,
+            lead_name,
+            partner.id,
+            connector.id,
+            connector.type,
+        )
+        return new_lead

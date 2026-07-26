@@ -113,17 +113,7 @@ async def get_messages(
                 continue
             if msg_id not in attachments_by_message:
                 attachments_by_message[msg_id] = []
-            attachments_by_message[msg_id].append(
-                {
-                    "id": att.id,
-                    "name": att.name,
-                    "mimetype": att.mimetype,
-                    "size": att.size,
-                    "checksum": att.checksum,
-                    "is_voice": att.is_voice or False,
-                    "show_preview": att.show_preview,
-                }
-            )
+            attachments_by_message[msg_id].append(att.serialize_for_chat())
 
     # Загружаем реакции для всех сообщений одним запросом
     reactions_by_message: dict[int, dict[str, list]] = {}
@@ -162,42 +152,13 @@ async def get_messages(
         # прочитанным (автор его видел, ведь он его написал).
         is_own = msg.author_user_id and msg.author_user_id.id == user_id
         computed_is_read = is_own or (msg.id <= last_read_watermark)
-
-        msg_data = {
-            "id": msg.id,
-            "body": msg.body,
-            "message_type": msg.message_type,
-            "create_datetime": msg.create_datetime.isoformat(),
-            "starred": msg.starred,
-            "pinned": msg.pinned,
-            "is_edited": msg.is_edited,
-            "is_read": computed_is_read,
-            "parent_id": msg.parent_id,
-            "connector_id": msg.connector_id,
-            "connector_type": msg.connector_type,
-            "author": format_message_author(msg),
-            "attachments": attachments_by_message.get(msg.id, []),
-            "reactions": format_reactions(msg.id),
-            "is_deleted": msg.is_deleted is True,
-        }
-
-        # Call-поля (добавляем только для message_type='call',
-        # чтобы не раздувать payload обычных сообщений).
-        if msg.message_type == "call":
-            msg_data["call_direction"] = msg.call_direction
-            msg_data["call_disposition"] = msg.call_disposition
-            msg_data["call_duration"] = msg.call_duration
-            msg_data["call_talk_duration"] = msg.call_talk_duration
-            msg_data["call_answer_time"] = (
-                msg.call_answer_time.isoformat()
-                if msg.call_answer_time
-                else None
+        result.append(
+            msg.serialize_for_chat(
+                is_read=computed_is_read,
+                attachments=attachments_by_message.get(msg.id, []),
+                reactions=format_reactions(msg.id),
             )
-            msg_data["call_end_time"] = (
-                msg.call_end_time.isoformat() if msg.call_end_time else None
-            )
-
-        result.append(msg_data)
+        )
 
     return {"data": result}
 

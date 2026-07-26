@@ -223,6 +223,83 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
             }
         return None
 
+    def serialize_for_ws(
+        self,
+        *,
+        author: dict,
+        attachments: list[dict],
+        connector_type: str | None = None,
+        author_user_id: int | None = None,
+        author_partner_id: int | None = None,
+        partner_id: int | None = None,
+        lead_id: int | None = None,
+        body_limit: int | None = None,
+    ) -> dict:
+        """Форма сообщения для WS-события `new_message` (входящий путь).
+
+        Часть данных не выводится из самого сообщения и передаётся явно:
+        author (у входящего имя — контрагента, а не автора-стаба),
+        attachments (уже сериализованы, см. Attachment.serialize_for_chat),
+        partner_id/lead_id — теги «ленты». body_limit обрезает тело (входящий
+        шлёт превью в 200 символов; пустое тело → None, 1:1 с прежним
+        `body[:200] if body else None`).
+        """
+        body = self.body
+        if body_limit is not None:
+            body = body[:body_limit] if body else None
+        return {
+            "id": self.id,
+            "body": body,
+            "author": author,
+            "author_user_id": author_user_id,
+            "author_partner_id": author_partner_id,
+            "partner_id": partner_id,
+            "lead_id": lead_id,
+            "create_datetime": (
+                self.create_datetime.isoformat()
+                if self.create_datetime
+                else None
+            ),
+            "connector_type": connector_type,
+            "attachments": attachments,
+        }
+
+    def serialize_for_chat(
+        self,
+        *,
+        is_read: bool,
+        attachments: list[dict],
+        reactions: list[dict],
+    ) -> dict:
+        """Форма сообщения для списка REST GET /messages (история чата).
+
+        Поля, зависящие от запроса/пользователя, передаются явно: is_read (по
+        watermark текущего пользователя), attachments/reactions (грузятся одним
+        запросом на все сообщения — против N+1). Автор — из self.author
+        (полиморфный), с тем же фолбэком Unknown, что был в
+        format_message_author.
+        """
+        data = {
+            "id": self.id,
+            "body": self.body,
+            "message_type": self.message_type,
+            "create_datetime": self.create_datetime.isoformat(),
+            "starred": self.starred,
+            "pinned": self.pinned,
+            "is_edited": self.is_edited,
+            "is_read": is_read,
+            "parent_id": self.parent_id,
+            "connector_id": self.connector_id,
+            "connector_type": self.connector_type,
+            "author": self.author
+            or {"id": None, "name": "Unknown", "type": None},
+            "attachments": attachments,
+            "reactions": reactions,
+            "is_deleted": self.is_deleted is True,
+        }
+
+        return data
+
     @hybridmethod
     async def post_message(
         self,

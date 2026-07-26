@@ -61,6 +61,11 @@ class ChatMessageAdapter:
         raise NotImplementedError()
 
     @property
+    def item_id(self) -> str | None:
+        """ID обьявлени или связаннйо сущности во внешней системе."""
+        return None
+
+    @property
     def thread_message_ids(self) -> list[str]:
         """
         ID сообщений, по которым видно, к какой переписке относится это.

@@ -2,19 +2,18 @@
 # Chat module - base strategy pattern
 
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Tuple
-import json
 import logging
 import mimetypes
 
-from backend.base.crm.users.models.users import SYSTEM_USER_ID
 from backend.base.system.core.enviroment import env
+from backend.base.crm.chat.strategies.pipeline_incoming import (
+    IncomingMessagePipeline,
+)
 
 if TYPE_CHECKING:
     from backend.base.system.core.enviroment import Environment
     from backend.base.crm.chat.models.chat_connector import ChatConnector
-    from backend.base.crm.partners.models.contact import Contact
     from backend.base.crm.attachments.models.attachments import Attachment
     from backend.base.crm.chat.models.chat_external_account import (
         ChatExternalAccount,
@@ -22,47 +21,6 @@ if TYPE_CHECKING:
     from backend.base.crm.chat.strategies.adapter import ChatMessageAdapter
 
 logger = logging.getLogger(__name__)
-
-
-class IncomingRoute(str, Enum):
-    """
-    Судьба входящего сообщения — ВСЕ возможные исходы, по одному имени на исход.
-
-    Порядок принятия решения: ПЕРЕПИСКА → СВЯЗЬ → ХОЛОДНЫЙ СТАРТ.
-    Он важен: только переписка различает два наших чата с одним адресатом
-    (личный и групповой) — адрес у них общий. Не менять местами.
-    """
-
-    # Адрес/тред уже привязан к чату (chat_external_chat). Основной путь.
-    ROUTED_BY_LINK = "routed_by_link"
-
-    # Сообщение само сказало, куда лечь: «я ответ вон на те». Только email.
-    ROUTED_BY_THREAD = "routed_by_thread"
-
-    # Переписки нет, контакта раньше не было → завели партнёра и его чат.
-    ROUTED_PARTNER_NEW = "routed_partner_new"
-
-    # Переписки нет, но партнёр уже известен → открыли/нашли его чат.
-    ROUTED_PARTNER_KNOWN = "routed_partner_known"
-
-    # Наш сотрудник написал на общий адрес, переписки с ним ещё нет.
-    SKIP_OWN_USER = "skip_own_user"
-
-    # Контакт есть, но у него не заполнен ни партнёр, ни пользователь.
-    SKIP_ERROR_NO_PARTNER_NO_USER = "skip_error_no_partner_no_user"
-
-    # Не поняли, КТО ИЗ ДВОИХ клиент: resolve_partner вернул (None, None).
-    SKIP_ERROR_COUNTERPARTY = "skip_error_counterparty"
-
-
-# Исходы, при которых чата нет и обрабатывать нечего.
-_SKIP_ROUTES = frozenset(
-    {
-        IncomingRoute.SKIP_ERROR_COUNTERPARTY,
-        IncomingRoute.SKIP_OWN_USER,
-        IncomingRoute.SKIP_ERROR_NO_PARTNER_NO_USER,
-    }
-)
 
 
 class ChatStrategyBase(ABC):
@@ -111,6 +69,11 @@ class ChatStrategyBase(ABC):
     # молча ничего не шлёт. Email адресуется своими полями (email_from/
     # email_username), внешний аккаунт ему не нужен — стратегия ставит False.
     requires_outbox_account: bool = True
+
+    # В каком виде канал отдаёт бинарные данные вложения:
+    #   "url"     — ссылка или идентификатор, файл надо скачать (мессенджеры);
+    #   "content" — байты уже лежат в самом сообщении (почта).
+    attachments_source = "url"
 
     # ========================================================================
     # Абстрактные методы - должны быть реализованы в каждой стратегии
@@ -267,7 +230,9 @@ class ChatStrategyBase(ABC):
 
             # 4. Обрабатываем сообщение в транзакции
             async with env.apps.db.get_transaction():
-                await self._process_incoming_message(env, connector, adapter)
+                await IncomingMessagePipeline(
+                    self, env, connector, adapter
+                ).run()
 
             return {"ok": True}
 
@@ -296,285 +261,6 @@ class ChatStrategyBase(ABC):
             connector_id=connector.id,
         )
 
-    async def _process_incoming_message(
-        self,
-        env: "Environment",
-        connector: "ChatConnector",
-        adapter: "ChatMessageAdapter",
-    ) -> None:
-        """
-        Обработать входящее сообщение от внешнего сервиса.
-
-        1. Найти или создать внешний аккаунт отправителя
-        2. Найти или создать внутренний чат
-        3. Создать сообщение
-        4. Создать связь с внешним сообщением
-        5. Обработать вложения
-        6. Создать/обновить лид по правилам (lead generation)
-        7. Отправить через WebSocket
-        """
-
-        # Клиент-контрагент чата: его id и имя одним хуком. Обычно это автор
-        # сообщения, но в некоторых интеграциях (Avito) webhook приходит и на
-        # наши исходящие — тогда клиента вычисляем из участников чата, а не из
-        # author_id (это будет наш аккаунт).
-        # иногда имя также идет отдельным запросом
-        counterparty_external_id, counterparty_external_name = (
-            await self.resolve_partner_id_and_name(connector, adapter)
-        )
-        if not counterparty_external_id:
-            logger.info(
-                "[%s] Message %s → %s",
-                self.strategy_type,
-                adapter.message_id,
-                IncomingRoute.SKIP_ERROR_COUNTERPARTY.value,
-            )
-            return
-
-        # 1. Контакт (+ партнёр, если адрес незнакомый). Первый элемент —
-        # ExternalAccount, он здесь не нужен.
-        _, contact, created = (
-            await env.models.chat_external_account.find_or_create_for_webhook(
-                connector=connector,
-                external_id=counterparty_external_id,
-                contact_value=counterparty_external_id,
-                display_name=counterparty_external_name,
-                raw=json.dumps(adapter.raw) if adapter.raw else None,
-            )
-        )
-
-        # Имя контрагента. Связываем ЗДЕСЬ и БЕЗУСЛОВНО: его читает блок
-        # WS-уведомления в самом конце (author_data), и на любом пути, где имя
-        # не связано, там был бы NameError. Контакт полиморфен — имя берём у
-        # того владельца, который есть.
-        counterparty_name = None
-        if contact.partner_id:
-            counterparty_name = contact.partner_id.name
-        elif contact.user_id:
-            counterparty_name = contact.user_id.name
-
-        # Связь ищем ВСЕГДА, даже если чат определится перепиской: external_chat
-        # нужен лидогенерации ниже. По external_id ЛИБО address (write-first мог
-        # создать связь по номеру).
-        external_chat = (
-            await env.models.chat_external_chat.find_by_id_or_address(
-                key=adapter.chat_id,
-                connector_id=connector.id,
-            )
-        )
-
-        # 2. Куда класть сообщение: ПЕРЕПИСКА → СВЯЗЬ → ХОЛОДНЫЙ СТАРТ.
-        # Плоская цепочка: как только route назначен, следующие ветки молчат.
-        # Порядок важен — только переписка различает два наших чата с одним
-        # адресатом (личный и групповой). Не менять местами.
-        route = None
-        chat_id = None
-
-        # Переписка: сообщение само сказало «я ответ вон на те». Только email —
-        # у прочих адаптеров thread_message_ids пуст по дефолту.
-        if adapter.thread_message_ids:
-            chat_id = (
-                await env.models.chat_external_message.thread_incoming_chat(
-                    external_ids=adapter.thread_message_ids,
-                    connector_id=connector.id,
-                )
-            )
-            if chat_id:
-                route = IncomingRoute.ROUTED_BY_THREAD
-
-        # Связь: тред уже привязан к чату.
-        if route is None and external_chat and external_chat.chat_id:
-            chat_id = (
-                external_chat.chat_id.id
-                if hasattr(external_chat.chat_id, "id")
-                else external_chat.chat_id
-            )
-            route = IncomingRoute.ROUTED_BY_LINK
-
-        # Холодный старт с клиентом: его единственный внешний чат (модель 1:1),
-        # и сразу привязываем к нему тред.
-        if route is None and contact.partner_id:
-            chat = await env.models.chat.get_or_create_partner_chat(
-                contact.partner_id.id,
-                connector=connector,
-                partner_name=counterparty_name,
-            )
-            chat_id = chat.id
-            route = (
-                IncomingRoute.ROUTED_PARTNER_NEW
-                if created
-                else IncomingRoute.ROUTED_PARTNER_KNOWN
-            )
-            item_title, item_url = await self._fetch_item_info(
-                connector, adapter
-            )
-            await env.models.chat_external_chat.create_link(
-                external_id=adapter.chat_id,
-                connector_id=connector.id,
-                chat_id=chat_id,
-                item_title=item_title,
-                item_url=item_url,
-            )
-            external_chat = (
-                await env.models.chat_external_chat.find_by_external_id(
-                    external_id=adapter.chat_id,
-                    connector_id=connector.id,
-                )
-            )
-
-        # Ни то ни другое — класть некуда, см. комменты у членов IncomingRoute.
-        if route is None:
-            route = (
-                IncomingRoute.SKIP_OWN_USER
-                if contact.user_id
-                else IncomingRoute.SKIP_ERROR_NO_PARTNER_NO_USER
-            )
-
-        # Одна строка на исход — по ней видно судьбу ЛЮБОГО сообщения.
-        logger.info(
-            "[%s] Message %s → %s (chat=%s, contact=%s)",
-            self.strategy_type,
-            adapter.message_id,
-            route.value,
-            chat_id,
-            contact.id,
-        )
-
-        if route in _SKIP_ROUTES:
-            return
-
-        # Лидогенерация — ДО создания сообщения, чтобы сразу проставить
-        # message.lead_id (тег «ленты» лида). Лид резолвится по клиенту-
-        # контрагенту чата; при исходящем автор — оператор, но лид всё равно
-        # на клиента (contact.partner_id). Раньше этот блок стоял ПОСЛЕ
-        # post_message (сообщение, породившее лид, тегировалось NULL) — теперь
-        # синхронно. Сбой лидогенерации не валит обработку: lead_id=None,
-        # сообщение остаётся видно в партнёр-скоупе ленты.
-        lead_id = None
-        if connector.lead_generation:
-            try:
-                if contact.partner_id:
-                    lead = await self._get_or_create_lead(
-                        env=env,
-                        connector=connector,
-                        adapter=adapter,
-                        contact=contact,
-                        external_chat=external_chat,
-                    )
-                    if lead is not None:
-                        lead_id = lead.id
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[%s] Lead generation failed for message %s: %s",
-                    self.strategy_type,
-                    adapter.message_id,
-                    exc,
-                    exc_info=True,
-                )
-
-        # 3. Определяем автора сообщения.
-        # contact — это контакт КЛИЕНТА-контрагента.
-        author_user_id = None
-        author_partner_id = None
-
-        if adapter.is_from_external:
-            if contact.user_id:
-                # Оператор (контакт привязан к user)
-                author_user_id = contact.user_id.id
-            elif contact.partner_id:
-                # Клиент
-                author_partner_id = contact.partner_id.id
-        else:
-            # Наше сообщение (например, оператор написал клиенту прямо из
-            # приложения Avito). Конкретного оператора webhook не передаёт,
-            # поэтому автор — системный пользователь («магазин»).
-            author_user_id = SYSTEM_USER_ID
-
-        # 4. Создаём сообщение. Вид — обычный comment; канал несёт
-        # connector_type (проставляется в post_message из connector.type).
-        # Рендер письма (HTML) на фронте — по connector_type, без костыля
-        # message_type='email'.
-        # Тело для хранения: адаптер сам сериализует своё сообщение. Email
-        # упаковывает {"subject","html"} (свой формат, как system хранит JSON);
-        # прочие адаптеры отдают текст (дефолт ChatMessageAdapter.serialized_body).
-        message = await env.models.chat_message.post_message(
-            chat_id=chat_id,
-            author_user_id=author_user_id,
-            author_partner_id=author_partner_id,
-            body=adapter.serialized_body,
-            connector_id=connector.id,
-            lead_id=lead_id,
-        )
-
-        # 5. Создаём связь с внешним сообщением
-        await env.models.chat_external_message.create_link(
-            external_id=adapter.message_id,
-            connector_id=connector.id,
-            message_id=message.id,
-            external_chat_id=adapter.chat_id,
-        )
-
-        # 6. Сохраняем вложения. Возвращённый список уже в формате
-        # REST-эндпоинта — кладём его в WS-пейлоад ниже, чтобы вложения
-        # входящего сообщения показывались вживую, без обновления страницы.
-        attachments_payload = await self.save_attachments(
-            connector, adapter, message
-        )
-
-        # 7. Лидогенерация выполнена ВЫШЕ (до post_message), чтобы message.lead_id
-        # проставился синхронно. Здесь ничего не делаем.
-
-        # 8. Отправляем уведомление через WebSocket.
-        # partner_id/lead_id едут в пейлоаде — по ним фронт роутит событие в
-        # «ленты» партнёра/лида (помимо кэша чата). partner_id тут известен
-        # даром (contact.partner_id), поэтому кладём оба тега.
-        author_data = {
-            "id": author_user_id or author_partner_id,
-            "name": counterparty_name or adapter.author_name,
-            "type": "user" if author_user_id else "partner",
-        }
-
-        await env.apps.chat.chat_manager.send_to_chat(
-            chat_id=chat_id,
-            message={
-                "type": "new_message",
-                "chat_id": chat_id,
-                "message": {
-                    "id": message.id,
-                    "body": message.body[:200] if message.body else None,
-                    "author": author_data,
-                    "author_user_id": author_user_id,
-                    "author_partner_id": author_partner_id,
-                    "partner_id": (
-                        contact.partner_id.id if contact.partner_id else None
-                    ),
-                    "lead_id": lead_id,
-                    "create_datetime": (
-                        message.create_datetime.isoformat()
-                        if message.create_datetime
-                        else None
-                    ),
-                    "connector_type": connector.type,
-                    # Вложения в формате REST /messages — чтобы бинарный
-                    # контент показывался сразу по WS, а не только после F5.
-                    "attachments": attachments_payload,
-                },
-                "external": True,
-            },
-        )
-
-        logger.info(
-            "[%s] Processed message %s -> internal %s",
-            self.strategy_type,
-            adapter.message_id,
-            message.id,
-        )
-
-    # В каком виде канал отдаёт бинарные данные вложения:
-    #   "url"     — ссылка или идентификатор, файл надо скачать (мессенджеры);
-    #   "content" — байты уже лежат в самом сообщении (почта).
-    attachments_source = "url"
-
     async def save_attachments(
         self,
         connector: "ChatConnector",
@@ -589,7 +275,11 @@ class ChatStrategyBase(ABC):
         дозагрузка страницы рендерились фронтом одинаково. Нет вложений — [].
         """
         attachments: list["Attachment"] = []
-        for index, item in enumerate([*adapter.images, *adapter.files], 1):
+        # images/files по контракту — списки, но некоторые адаптеры отдают
+        # None (напр. Avito.images для не-картиночных сообщений). Страхуемся:
+        # иначе распаковка [*None] падает и ТЕРЯЕТ всё сообщение.
+        media = [*(adapter.images or []), *(adapter.files or [])]
+        for index, item in enumerate(media, 1):
             # Часть каналов отдаёт картинки просто ссылкой.
             if not isinstance(item, dict):
                 item = {"url": item}
@@ -605,7 +295,11 @@ class ChatStrategyBase(ABC):
             # Имя от канала, если есть: у письма это настоящее имя файла.
             # Свой фолбэк нумеруем, иначе безымянные вложения одного
             # сообщения получат одинаковое имя.
-            ext = mimetypes.guess_extension(mimetype) or ""
+            # mimetype бывает None (Telegram-фото / Avito-картинки не несут
+            # его в сообщении) — guess_extension(None) падает на Python 3.12.
+            ext = ""
+            if mimetype:
+                ext = mimetypes.guess_extension(mimetype) or ""
             attachments.append(
                 env.models.attachment(
                     name=item.get("name")
@@ -654,19 +348,9 @@ class ChatStrategyBase(ABC):
                 "show_preview",
             ],
         )
-        # Формат словаря — зеркало REST-сериализации вложения в messages.py.
-        return [
-            {
-                "id": att.id,
-                "name": att.name,
-                "mimetype": att.mimetype,
-                "size": att.size,
-                "checksum": att.checksum,
-                "is_voice": att.is_voice or False,
-                "show_preview": att.show_preview,
-            }
-            for att in rows
-        ]
+        # Единый сериализатор вложения — метод модели вложения; та же форма,
+        # что и REST /messages (см. get_messages).
+        return [att.serialize_for_chat() for att in rows]
 
     # Лидогенерация
     async def _fetch_item_info(
@@ -683,9 +367,9 @@ class ChatStrategyBase(ABC):
         item_title = ""
         item_url = ""
         try:
-            user_id = getattr(adapter, "user_id", None)
-            item_id = getattr(adapter, "item_id", None)
-            chat_id = getattr(adapter, "chat_id", None)
+            user_id = adapter.user_id
+            item_id = adapter.item_id
+            chat_id = adapter.chat_id
             # user_id может быть методом — это известно для Avito-адаптера
             # if callable(user_id):
             #     user_id = user_id()
@@ -701,7 +385,7 @@ class ChatStrategyBase(ABC):
                 item_url = info.get("url") or ""
             else:
                 # Fallback на отдельный get_item_url, если стратегия даёт только его.
-                if item_id:
+                if item_id and user_id:
                     item_url = (
                         await self.get_item_url(connector, user_id, item_id)
                         or ""
@@ -713,173 +397,6 @@ class ChatStrategyBase(ABC):
                 exc,
             )
         return item_title, item_url
-
-    def _build_routing_payload(
-        self,
-        adapter: "ChatMessageAdapter",
-        contact: "Contact",
-        item_title: str,
-        item_url: str,
-        partner_name: str = "",
-    ) -> dict:
-        """Сформировать словарь для проверки правил маршрутизации.
-
-        Структура (item_title, message_text, item_url,
-        partner_name) — это позволяет администратору применять одни и
-        те же правила между системами.
-        """
-        if not partner_name and contact and contact.partner_id:
-            # Может быть stub — name не загружен; не страшно, fallback ниже.
-            partner_name = getattr(contact.partner_id, "name", None) or ""
-        if not partner_name:
-            partner_name = getattr(adapter, "author_name", None) or ""
-        return {
-            "item_title": item_title or "",
-            "message_text": adapter.text or "",
-            "item_url": item_url or "",
-            "partner_name": partner_name,
-        }
-
-    async def _get_or_create_lead(
-        self,
-        env: "Environment",
-        connector: "ChatConnector",
-        adapter: "ChatMessageAdapter",
-        contact: "Contact",
-        external_chat,
-    ):
-        """Создать или найти существующий лид для входящего сообщения.
-
-        Логика:
-        - имя лида = item_title (заголовок объявления) или partner.name;
-        - ищем существующий лид по (partner_id, connector_id);
-        - если у найденного лида другой website (item_url) — создаём новый
-          (клиент пишет по другому объявлению — это другой лид);
-        - применяем правила chat_routing_rule_lead если включено
-          `connector.lead_distribution`.
-        """
-        partner = contact.partner_id if contact else None
-        if not partner:
-            # Без партнёра-клиента создавать лид бессмысленно.
-            return None
-
-        # partner здесь может быть "stub" (только id, без полей) — дочерние
-        # поля типа .name не подгружаются автоматически. Поэтому если name
-        # пустое — догружаем явно из БД (один лёгкий запрос).
-        partner_name = partner.name
-        # partner_name = getattr(partner, "name", None)
-        # if not partner_name:
-        #     loaded_partners = await env.models.partner.search(
-        #         filter=[("id", "=", partner.id)],
-        #         fields=["id", "name"],
-        #         limit=1,
-        #     )
-        #     if loaded_partners:
-        #         partner_name = loaded_partners[0].name or ""
-        #     else:
-        #         partner_name = ""
-
-        # item_title / item_url — из кеша chat_external_chat
-        item_title = ""
-        item_url = ""
-        if external_chat:
-            item_title = (external_chat.item_title or "").strip()
-            item_url = (external_chat.item_url or "").strip()
-
-        # Ищем существующий лид по (partner_id, connector_id) — берём свежий
-        existing_leads = await env.models.lead.search(
-            filter=[
-                ("partner_id", "=", partner.id),
-                ("connector_id", "=", connector.id),
-            ],
-            fields=["id", "website", "name"],
-            sort="id",
-            order="DESC",
-            limit=1,
-        )
-        existing_lead = existing_leads[0] if existing_leads else None
-
-        # Если у найденного лида другой website — этот клиент пишет по
-        # другому объявлению, создаём новый лид.
-        if (
-            existing_lead
-            and item_url
-            and existing_lead.website
-            and existing_lead.website != item_url
-        ):
-            existing_lead = None
-
-        if existing_lead:
-            # Обновим website если он появился позже
-            if item_url and existing_lead.website != item_url:
-                await existing_lead.update(env.models.lead(website=item_url))
-            return existing_lead
-
-        # Имя лида: заголовок объявления или имя партнёра.
-        fallback_name = (
-            partner_name
-            or getattr(adapter, "author_name", None)
-            or f"Lead {connector.name or connector.type}"
-        )
-        lead_name = item_title or fallback_name
-
-        # Правила маршрутизации
-        assigned_user = None
-        assigned_team = None
-        if connector.lead_distribution:
-            try:
-                rule_user, rule = (
-                    await env.models.chat_routing_rule_lead.find_user_for(
-                        connector.id,
-                        self._build_routing_payload(
-                            adapter,
-                            contact,
-                            item_title,
-                            item_url,
-                            partner_name=partner_name,
-                        ),
-                    )
-                )
-                if rule_user:
-                    assigned_user = rule_user
-                    if rule and rule.team_id:
-                        assigned_team = rule.team_id
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[%s] Routing rule evaluation failed: %s",
-                    self.strategy_type,
-                    exc,
-                )
-
-        # Собираем payload для нового лида
-        lead_payload = {
-            "name": lead_name,
-            "type": connector.lead_type or "opportunity",
-            "partner_id": partner,
-            "connector_id": env.models.chat_connector(id=connector.id),
-            "website": item_url or None,
-            "notes": (
-                f"Создан из сообщения {adapter.message_id} ({connector.name})"
-            ),
-        }
-        if assigned_user:
-            lead_payload["user_id"] = assigned_user
-        if assigned_team:
-            lead_payload["team_id"] = assigned_team
-        if connector.lead_stage_id:
-            lead_payload["stage_id"] = connector.lead_stage_id
-
-        new_lead = env.models.lead(**lead_payload)
-        new_lead.id = await env.models.lead.create(payload=new_lead)
-        logger.info(
-            "[%s] Created lead %s (name=%r) for partner %s via connector %s",
-            self.strategy_type,
-            new_lead.id,
-            lead_name,
-            partner.id,
-            connector.id,
-        )
-        return new_lead
 
     # ========================================================================
     # Дополнительные методы
@@ -1036,7 +553,7 @@ class ChatStrategyBase(ABC):
         message_id: int,
         attachments: list["Attachment"] | None = None,
         recipients_ids: list[dict] | None = None,
-    ) -> bool:
+    ):
         """
         Отправить сообщение во внешний коннектор (Telegram, WhatsApp и т.д.)
 
@@ -1281,7 +798,7 @@ class ChatStrategyBase(ABC):
         чата, а не по author_id.
 
         external_id=None означает «не удалось определить клиента» — обработка
-        сообщения будет пропущена (см. _process_incoming_message), чтобы не
+        сообщения будет пропущена, чтобы не
         создавать партнёра/лид на наш собственный аккаунт.
         """
         return adapter.author_id, adapter.author_name

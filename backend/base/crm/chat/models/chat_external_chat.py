@@ -31,6 +31,9 @@ class ChatExternalChat(DotModel):
 
     __table__ = "chat_external_chat"
 
+    __indexes__ = [
+        ("chat_id", "connector_id", "id"),
+    ]
     id: int = Integer(primary_key=True)
 
     # Внешний идентификатор чата в стороннем сервисе.

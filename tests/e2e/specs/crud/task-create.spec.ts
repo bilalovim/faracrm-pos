@@ -194,16 +194,25 @@ async function pickCombobox(
     }
   }
 
-  const visibleOptions = page.locator('[role="option"]:visible');
+  // Реальные записи, ИСКЛЮЧАЯ action-опции «Создать…»/«Создать и заполнить…».
+  // Many2one с quickCreate рендерит «Создать и заполнить…» ВСЕГДА (без ввода) и
+  // РАНЬШЕ, чем подгружаются async-записи. При пустом поиске .first() мог
+  // схватить её → открывался попап-форма (с ContactsWidget), который порталом
+  // перекрывал следующее поле и ронял клик. Отсекаем по префиксу i18n-текста
+  // (ru/en) и ждём именно реальную запись, а не всегда-присутствующий action.
+  const CREATE_OPTION = /^(Создать|Create)/;
+  const visibleOptions = page
+    .locator('[role="option"]:visible')
+    .filter({ hasNotText: CREATE_OPTION });
   await visibleOptions.first().waitFor({ state: 'visible', timeout: 5_000 });
 
-  const targetOption = search
-    ? (await visibleOptions
-          .filter({ hasText: new RegExp(search, 'i') })
-          .count()) > 0
+  const targetOption =
+    search &&
+    (await visibleOptions
+      .filter({ hasText: new RegExp(search, 'i') })
+      .count()) > 0
       ? visibleOptions.filter({ hasText: new RegExp(search, 'i') }).first()
-      : visibleOptions.first()
-    : visibleOptions.first();
+      : visibleOptions.first();
 
   await targetOption.click({ timeout: 5_000 });
 

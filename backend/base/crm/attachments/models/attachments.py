@@ -60,6 +60,22 @@ class Attachment(AuditMixin, DotModel):
         result["checksum"] = checksum if checksum else None
         return result
 
+    def serialize_for_chat(self) -> dict:
+        """Форма вложения для чата — единый вид для REST-списка (/messages) и
+        WS-пуша входящего вложения (strategy.save_attachments), чтобы фронт
+        рендерил их одинаково. Ожидает поля
+        id/name/mimetype/size/checksum/is_voice/show_preview.
+        """
+        return {
+            "id": self.id,
+            "name": self.name,
+            "mimetype": self.mimetype,
+            "size": self.size,
+            "checksum": self.checksum,
+            "is_voice": self.is_voice or False,
+            "show_preview": self.show_preview,
+        }
+
     id: int = Integer(primary_key=True)
 
     name: str = Char(

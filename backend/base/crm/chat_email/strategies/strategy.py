@@ -17,6 +17,7 @@ import aiosmtplib
 import aioimaplib
 
 from backend.base.crm.chat.strategies.strategy import ChatStrategyBase
+from ...chat.strategies.pipeline_incoming import IncomingMessagePipeline
 from .adapter import EmailMessageAdapter
 
 if TYPE_CHECKING:
@@ -171,7 +172,7 @@ class EmailStrategy(ChatStrategyBase):
         username = connector.email_username
         password = connector.email_password
 
-        if not all([imap_host, username, password]):
+        if not imap_host or not username or not password:
             logger.warning("Email connector: IMAP not configured")
             return True  # Не ошибка - просто не настроен IMAP
 
@@ -621,7 +622,7 @@ class EmailStrategy(ChatStrategyBase):
         ВАЖНО: watermark (connector.imap_last_uid) здесь НЕ двигается — это
         делает cron_fetch_emails ПОСЛЕ успешной обработки каждого письма.
         Раньше он персистился прямо здесь, сразу после удачного FETCH, и любое
-        падение обработки (например ValueError в _process_incoming_message)
+        падение обработки
         теряло письмо НАВСЕГДА: watermark уже уехал, а на следующем опросе
         "UID <uid+1>:*" по правилу n:* вернёт то же письмо, и фильтр
         u > last_uid его отсечёт. Загрузить письмо и обработать письмо — разные
@@ -641,7 +642,7 @@ class EmailStrategy(ChatStrategyBase):
         password = connector.email_password
         last_uid = connector.imap_last_uid or 1
 
-        if not all([imap_host, username, password]):
+        if not imap_host or not username or not password:
             logger.warning("Email IMAP not configured")
             return []
 
@@ -854,12 +855,6 @@ class EmailStrategy(ChatStrategyBase):
         processed = 0
         errors = 0
 
-        # Получаем все активные email-коннекторы. Грузим ПОЛНОСТЬЮ (без fields=,
-        # т.е. все скаляры) + вложенные contact_type_id/outbox_account_id —
-        # они нужны при обработке входящего (_process_incoming_message →
-        # find_or_create_for_webhook требует connector.contact_type_id, а
-        # лидогенерация/From — прочие поля). Раньше грузился урезанный набор
-        # без contact_type_id → «Contact type must be set» на входящем письме.
         connectors = await env.models.chat_connector.search(
             filter=[
                 ("type", "=", "email"),
@@ -928,9 +923,9 @@ class EmailStrategy(ChatStrategyBase):
 
                         # Обрабатываем сообщение в транзакции
                         async with env.apps.db.get_transaction():
-                            await strategy._process_incoming_message(
-                                env, connector, adapter
-                            )
+                            await IncomingMessagePipeline(
+                                strategy, env, connector, adapter
+                            ).run()
 
                         processed += 1
                         last_ok_uid = msg["uid"]

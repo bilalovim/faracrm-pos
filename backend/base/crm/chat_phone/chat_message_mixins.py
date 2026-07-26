@@ -4,7 +4,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from backend.base.system.core.extensions import extend
+from backend.base.system.core.extensions import extend, call_original
 from backend.base.crm.chat.models.chat_message import ChatMessage
 from backend.base.system.dotorm.dotorm.fields import (
     Integer,
@@ -80,3 +80,39 @@ class ChatMessagePhoneMixin(_Base):
     call_end_time: "datetime | None" = Datetime(
         description="Время завершения звонка",
     )
+
+    def serialize_for_chat(
+        self,
+        *,
+        is_read: bool,
+        attachments: list[dict],
+        reactions: list[dict],
+    ) -> dict:
+        # @extend копирует методы через setattr (НЕ встраивает в MRO), поэтому
+        # super() здесь падает (self — ChatMessage, миксина нет в его базах).
+        # Оригинальный serialize_for_chat зовём через call_original.
+        data = call_original(
+            self,
+            "serialize_for_chat",
+            is_read=is_read,
+            attachments=attachments,
+            reactions=reactions,
+        )
+
+        # Call-поля — только для message_type='call', чтобы не раздувать
+        # payload обычных сообщений.
+        if self.message_type == "call":
+            data["call_direction"] = self.call_direction
+            data["call_disposition"] = self.call_disposition
+            data["call_duration"] = self.call_duration
+            data["call_talk_duration"] = self.call_talk_duration
+            data["call_answer_time"] = (
+                self.call_answer_time.isoformat()
+                if self.call_answer_time
+                else None
+            )
+            data["call_end_time"] = (
+                self.call_end_time.isoformat() if self.call_end_time else None
+            )
+
+        return data
