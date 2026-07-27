@@ -13,6 +13,7 @@ from backend.base.crm.security.acl_post_init_mixin import ACL, ACLPerms
 from .models.models import Model
 from .models.apps import App as AppModel
 from .models.roles import Role
+from .models.workspace import Workspace
 from .access_control import SecurityAccessChecker
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ class SecurityApp(Service):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "settings",
         "name": "Security",
         "summary": "RBAC access and models store",
         "author": "FARA ERP",
@@ -43,6 +46,9 @@ class SecurityApp(Service):
         "model": ACL.READ_ONLY,
         "app": ACL.READ_ONLY,
         "role": ACL.READ_ONLY,
+        # Своё «Рабочее место» юзер может читать (для бейджа/справки), но не
+        # менять — назначает админ (см. ROLE_ACL.system_admin ниже).
+        "workspace": ACL.READ_ONLY,
         # "access_list": ACL.NO_ACCESS,
         # "rule": ACL.NO_ACCESS,
     }
@@ -55,6 +61,8 @@ class SecurityApp(Service):
             "role": ACL.FULL,
             "access_list": ACL.FULL,
             "rule": ACL.FULL,
+            # Управление «Рабочими местами» — часть настроек доступа.
+            "workspace": ACL.FULL,
         },
     }
 
@@ -104,8 +112,11 @@ class SecurityApp(Service):
         # ВАЖНО: Сначала создаём модели и роль base_user,
         # чтобы другие модули могли создать ACL
         await self._init_models(env)
+        # _init_apps переносит ui_menu/ui_menu_name из модулей на строки App.
         await self._init_apps(env)
         await self._init_base_role(env)
+        # Дефолтные «Рабочие места» (из запроса App.ui_menu) + бэкфилл.
+        await self._init_default_workspaces(env)
         await self._init_security_rules(env)
 
         # Системные настройки auth
@@ -200,7 +211,14 @@ class SecurityApp(Service):
                 await env.models.model.create(payload=Model(name=model_name))
 
     async def _init_apps(self, env: Environment):
-        """Создаёт записи в таблице apps из env.apps."""
+        """Создаёт/обновляет записи в таблице apps из env.apps.
+
+        Каждый модуль может объявить у себя атрибуты ui_menu / ui_menu_name
+        (см. модель App) — тогда его строка становится «UI-приложением»
+        (плиткой лаунчера). Флаги переносятся сюда и для НОВЫХ, и для уже
+        существующих строк (идемпотентно), чтобы после обновления кода
+        объявления подхватывались без пересоздания apps.
+        """
         app_codes = env.apps.get_names()
 
         if not app_codes:
@@ -210,19 +228,102 @@ class SecurityApp(Service):
             filter=[("code", "in", app_codes)],
             fields=["id", "code"],
         )
-        exist_codes = {a.code for a in exist_apps}
+        exist_by_code = {a.code: a.id for a in exist_apps}
 
         for code in app_codes:
-            if code not in exist_codes:
-                app_instance: App | None = getattr(env.apps, code, None)
-                if app_instance and app_instance.info:
-                    name = app_instance.info.get("name", code)
-                else:
-                    name = code
+            app_instance: App | None = getattr(env.apps, code, None)
+            info = (
+                app_instance.info if app_instance and app_instance.info else {}
+            )
+            name = info.get("name", code)
+            ui_menu = bool(info.get("ui_menu", False))
+            ui_menu_name = info.get("ui_menu_name")
 
+            if code in exist_by_code:
+                # Обновляем ТОЛЬКО UI-флаги у объявленных приложений; имя и
+                # прочее у существующих строк не трогаем.
+                if ui_menu or ui_menu_name:
+                    app = await env.models.app.get(exist_by_code[code])
+                    await app.update(
+                        payload=AppModel(
+                            ui_menu=ui_menu, ui_menu_name=ui_menu_name
+                        )
+                    )
+            else:
                 await env.models.app.create(
-                    payload=AppModel(code=code, name=name)
+                    payload=AppModel(
+                        code=code,
+                        name=name,
+                        ui_menu=ui_menu,
+                        ui_menu_name=ui_menu_name,
+                    )
                 )
+
+    async def _init_default_workspaces(self, env: Environment):
+        """Сидит два «Рабочих места» и раздаёт базовое.
+
+        - «Сотрудник» = то, что видит Internal User (base_user): Общение,
+          Партнёры, Активности, Файлы. Дефолт для новых юзеров и БЭКФИЛЛ
+          существующих без РМ — иначе после включения фичи (нет РМ → ничего
+          не видно) у них будет пустой лаунчер.
+        - «Все приложения» = все UI-приложения (для power-юзеров).
+        Идемпотентно по name; app_ids приводится к целевому набору на каждом
+        старте (m2m пишется через update selected). Имя базового РМ берётся
+        из users.DEFAULT_WORKSPACE_NAME (единый источник).
+        """
+        # Имя базового РМ — из ЕДИНОЙ константы (users.models.users), чтобы
+        # совпадало с User._default_workspace (дефолт поля workspace_id).
+        from backend.base.crm.users.models.users import (
+            DEFAULT_WORKSPACE_NAME,
+        )
+
+        async def _ensure_workspace(
+            name: str, app_ids: list[int], seq: int
+        ) -> int:
+            existing = await env.models.workspace.search(
+                filter=[("name", "=", name)], fields=["id"], limit=1
+            )
+            if existing:
+                ws_id = existing[0].id
+            else:
+                ws_id = await env.models.workspace.create(
+                    payload=Workspace(name=name, active=True, sequence=seq)
+                )
+            ws = await env.models.workspace.get(ws_id)
+            await ws.update(payload=Workspace(app_ids={"selected": app_ids}))
+            return ws_id
+
+        async def _app_ids_where(filter_: list) -> list[int]:
+            rows = await env.models.app.search(filter=filter_, fields=["id"])
+            return [r.id for r in rows]
+
+        # Базовое РМ = то, что видит Internal User. Запрос среди UI-приложений
+        # по ui_menu_name (это ключи групп меню на фронте).
+        base_names = ["communication", "contacts", "activity", "files"]
+        base_ids = await _app_ids_where(
+            [("ui_menu_name", "in", base_names), ("ui_menu", "=", True)]
+        )
+        base_ws_id = await _ensure_workspace(
+            DEFAULT_WORKSPACE_NAME, base_ids, 1
+        )
+
+        # «Все приложения» = ВСЕ UI-приложения ЗАПРОСОМ из БД (ui_menu=true).
+        all_ids = await _app_ids_where([("ui_menu", "=", True)])
+        await _ensure_workspace("Все приложения", all_ids, 2)
+
+        # Бэкфилл: НЕ-админам без РМ → базовое (иначе пустой лаунчер). Админам
+        # РМ НЕ назначаем — они видят всё через байпас (и бейджа быть не должно).
+        users_wo_ws = await env.models.user.search(
+            filter=[("workspace_id", "=", None), ("is_admin", "=", False)],
+            fields=["id"],
+        )
+        for u in users_wo_ws:
+            user = await env.models.user.get(u.id)
+            await user.update(
+                payload=env.models.user(
+                    workspace_id=env.models.workspace(id=base_ws_id)
+                )
+            )
 
     async def _init_base_role(self, env: Environment):
         """Создаёт базовую роль base_user и системную роль system_admin."""

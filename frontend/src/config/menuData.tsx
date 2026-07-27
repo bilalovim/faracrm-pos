@@ -242,7 +242,11 @@ const menuTree: GroupConfig[] = [
         Icon: IconUsers,
         label: 'Пользователи',
         labelKey: 'users:menu.users',
-        submenus: [{ model: 'users' }, { model: 'company' }],
+        submenus: [
+          { model: 'users' },
+          { model: 'company' },
+          { model: 'workspace' },
+        ],
       },
       {
         id: 'category_security',
@@ -286,6 +290,7 @@ export const items: MenuGroup[] = buildMenu(menuTree);
 export function getVisibleMenuItems(
   userRoles: RoleRecord[] = [],
   isAdmin: boolean = false,
+  workspaceAppKeys: string[] | null = null,
 ): MenuGroup[] {
-  return _getVisibleMenuItems(items, userRoles, isAdmin);
+  return _getVisibleMenuItems(items, userRoles, isAdmin, workspaceAppKeys);
 }

@@ -23,6 +23,8 @@ interface ButtonModalSelectProps {
   excludeIds?: number[];
   /** Поле для отображения и поиска. По умолчанию 'name'. */
   displayField?: string;
+  /** Доп. фильтр к выборке (домен), напр. [['ui_menu','=',true]]. */
+  extraFilters?: [string, string, any][];
   buttonProps?: ButtonProps & { children?: React.ReactNode };
 }
 
@@ -35,6 +37,7 @@ export function ButtonModalSelect({
   parentId,
   excludeIds = [],
   displayField = 'name',
+  extraFilters,
   buttonProps,
 }: ButtonModalSelectProps) {
   const { t } = useTranslation('common');
@@ -72,6 +75,10 @@ export function ButtonModalSelect({
   }
   if (excludeIds.length > 0) {
     filter.push(['id', 'not in', excludeIds]);
+  }
+  // Доп. домен от вызывающего (напр. ui_menu=true для UI-приложений).
+  if (extraFilters?.length) {
+    filter.push(...extraFilters);
   }
 
   const { data, isFetching } = useSearchQuery(

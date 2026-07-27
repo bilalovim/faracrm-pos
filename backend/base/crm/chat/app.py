@@ -28,6 +28,8 @@ class ChatApp(Service):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "communication",
         "name": "Chat",
         "summary": "Chat and messaging module with external integrations support",
         "author": "FARA CRM",

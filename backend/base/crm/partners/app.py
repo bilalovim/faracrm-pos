@@ -15,6 +15,8 @@ class PartnersApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "contacts",
         "name": "Partners",
         "summary": "Module allow work with partners",
         "author": "FARA ERP",

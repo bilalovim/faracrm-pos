@@ -35,6 +35,7 @@ from backend.base.crm.security.models.apps import App as AppModel
 from backend.base.crm.security.models.roles import Role
 from backend.base.crm.security.models.rules import Rule
 from backend.base.crm.security.models.sessions import Session
+from backend.base.crm.security.models.workspace import Workspace
 from backend.base.crm.attachments_google.mixins import (
     AttachmentStorageGoogleMixin,
 )
@@ -263,6 +264,7 @@ class Models(ModelsCore, ExtensibleMixin):
     model = Model
     app = AppModel
     session = Session
+    workspace = Workspace
     # attachments
     attachment = Attachment
     attachment_storage = AttachmentStorage

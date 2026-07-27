@@ -55,6 +55,8 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
   showSelect = true,
   inline_create = false,
   inline_update = false,
+  filter,
+  displayField,
   ...props
 }: {
   name: string;
@@ -65,6 +67,8 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
   /** Режим инлайн-редактирования. Ячейки становятся input-ами. */
   inline_create?: boolean;
   inline_update?: boolean;
+  /** Поле для отображения/поиска в модалке выбора (по умолчанию 'name'). */
+  displayField?: string;
 } & Omit<GetListParams, 'fields' | 'model'>) => {
   const [records, setRecords] = useState<RecordType[]>([]);
   const [recordsCreated, setRecordsCreated] = useState<RecordType[]>([]);
@@ -421,6 +425,8 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
               onSelect={handleSelectRecords}
               relatedFieldO2M={fieldsServer[name]?.relatedField}
               parentId={Number(id)}
+              extraFilters={filter}
+              displayField={displayField}
               buttonProps={{
                 size: 'xs',
                 variant: 'light',

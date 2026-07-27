@@ -32,6 +32,7 @@ from backend.base.system.core.exceptions.environment import FaraException
 if TYPE_CHECKING:
     from backend.base.system.core.enviroment import Environment
     from backend.base.crm.security.models.roles import Role
+    from backend.base.crm.security.models.workspace import Workspace
     from backend.base.crm.languages.models.language import Language
     from backend.base.crm.leads.models.team_crm import TeamCrm
     from backend.base.crm.partners.models.contact import Contact
@@ -60,6 +61,24 @@ async def _default_roles():
         limit=1,
     )
     return base_user or []
+
+
+# Имя базового «Рабочего места» (сидится в security/app.py вместе с ролью
+# base_user). Держим строку синхронной здесь и в сидере.
+DEFAULT_WORKSPACE_NAME = "Сотрудник"
+
+
+async def _default_workspace():
+    """Базовое «Рабочее место» — то, что видит Internal User
+    (Общение/Партнёры/Активности/Файлы). Проставляется НЕ-админам в
+    User.create (админу РМ не нужно — он видит всё через байпас); так у
+    обычных юзеров не пустой лаунчер (без РМ ничего не видно)."""
+    ws = await env.models.workspace.search(
+        filter=[("name", "=", DEFAULT_WORKSPACE_NAME)],
+        fields=["id", "name"],
+        limit=1,
+    )
+    return ws[0] if ws else None
 
 
 async def _default_langs():
@@ -114,6 +133,18 @@ class User(PolymorphicParentMixin):
         column1="role_id",
         column2="user_id",
         ondelete="cascade",
+    )
+    # «Рабочее место» (цифровое рабочее место) — курирует, какие приложения
+    # пользователь видит в лаунчере. Презентационный слой ПОВЕРХ ролей: не
+    # даёт и не отнимает доступ к данным (это ACL/Rules), только видимость
+    # меню. NULL → приложений не видно (кроме is_admin — он видит всё через
+    # байпас, поэтому РМ ему НЕ назначается). Базовое РМ проставляется
+    # не-админам в User.create (не field-default: тот не видит is_admin).
+    # Меняется админом (в т.ч. массово через bulk-update списка юзеров).
+    workspace_id: "Workspace | None" = Many2one(
+        relation_table=lambda: env.models.workspace,
+        required=False,
+        description="Рабочее место (набор видимых приложений)",
     )
     # Команды пользователя (обратная сторона team_crm.user_ids — та же
     # join-таблица). Кладутся в сессию при сборке (как role_ids) для
@@ -308,6 +339,16 @@ class User(PolymorphicParentMixin):
                         "status_code": 400,
                     }
                 )
+
+        # Базовое «Рабочее место» — только НЕ-админам (админ видит всё через
+        # байпас, РМ ему не нужно; field-default нельзя завязать на is_admin,
+        # он его не видит). Если РМ задано явно — не трогаем.
+        if not payload.is_admin and (
+            "workspace_id" not in payload.assigned_fields()
+        ):
+            default_ws = await _default_workspace()
+            if default_ws:
+                payload.workspace_id = default_ws
 
         return await super().create(payload, session, depends_jobs)
 

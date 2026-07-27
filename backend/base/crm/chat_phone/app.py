@@ -16,6 +16,8 @@ class ChatPhoneApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "telephony",
         "name": "Chat Phone",
         "summary": "Base telephony integration for chat module",
         "author": "FARA CRM",

@@ -1,0 +1,19 @@
+{
+  "fields": {
+    "id": "ID",
+    "name": "Name",
+    "sequence": "Sequence",
+    "active": "Active",
+    "app_ids": "Applications",
+    "app": "Application",
+    "workspace_id": "Workspace"
+  },
+  "sections": {
+    "workspace": "Workspace"
+  },
+  "menu": {
+    "title": "Workspaces",
+    "workspace": "Workspaces"
+  },
+  "badge": "Workspace"
+}

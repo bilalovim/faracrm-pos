@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   AppShell,
+  Badge,
   Box,
   Flex,
   Group,
@@ -27,6 +28,7 @@ import { MobileSubmenuDrawer } from './MobileSubmenuDrawer';
 import { ChatSidebar } from './ChatSidebar';
 import classes from './ModernLayout.module.css';
 import { useSelector } from 'react-redux';
+import { useTranslation } from 'react-i18next';
 import { MenuGroup } from '@config/menuGroups';
 import { getVisibleMenuItems } from '@config/menuData';
 
@@ -35,6 +37,7 @@ export function ModernLayout() {
   const [chatSidebarCollapsed, setChatSidebarCollapsed] = useState(false);
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const { t } = useTranslation('workspace');
 
   const session = useSelector((state: any) => state.auth.session);
   const menuItems = useMemo(
@@ -42,8 +45,13 @@ export function ModernLayout() {
       getVisibleMenuItems(
         session?.user_id?.role_ids || [],
         session?.user_id?.is_admin || false,
+        session?.user_id?.workspace_id?.app_keys ?? null,
       ),
-    [session?.user_id?.role_ids, session?.user_id?.is_admin],
+    [
+      session?.user_id?.role_ids,
+      session?.user_id?.is_admin,
+      session?.user_id?.workspace_id,
+    ],
   );
 
   // Определяем активную группу по текущему URL
@@ -127,6 +135,20 @@ export function ModernLayout() {
               }}>
               <Logo />
             </Box>
+
+            {/* Активное «Рабочее место» пользователя — бейдж, только desktop */}
+            {session?.user_id?.workspace_id?.name && (
+              <Box visibleFrom="md" style={{ flexShrink: 0 }}>
+                <Badge
+                  variant="light"
+                  color="gray"
+                  radius="sm"
+                  title={t('badge')}
+                  style={{ textTransform: 'none' }}>
+                  {session.user_id.workspace_id.name}
+                </Badge>
+              </Box>
+            )}
 
             {/* Горизонтальное меню — только tablet+ */}
             <Box

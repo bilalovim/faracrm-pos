@@ -21,6 +21,8 @@ class ActivityApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "activity",
         "name": "Activity",
         "summary": "Activities, reminders and notifications via system chat",
         "author": "FARA CRM",

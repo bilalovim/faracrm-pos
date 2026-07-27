@@ -74,6 +74,10 @@ import ruSavedFilters from './fara_saved_filters/locales/ru.json';
 import enReports from './fara_report_docx/locales/en.json';
 import ruReports from './fara_report_docx/locales/ru.json';
 
+// fara_workspace
+import enWorkspace from './fara_workspace/locales/en.json';
+import ruWorkspace from './fara_workspace/locales/ru.json';
+
 // ============ Функция слияния переводов ============
 type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
@@ -132,6 +136,7 @@ const resources = {
     tasks: enTasks,
     saved_filters: enSavedFilters,
     reports: enReports,
+    workspace: enWorkspace,
   },
   ru: {
     common: ruCommon,
@@ -151,6 +156,7 @@ const resources = {
     tasks: ruTasks,
     saved_filters: ruSavedFilters,
     reports: ruReports,
+    workspace: ruWorkspace,
   },
 };
 
@@ -179,6 +185,7 @@ i18n
       'activity',
       'saved_filters',
       'reports',
+      'workspace',
     ],
 
     interpolation: {

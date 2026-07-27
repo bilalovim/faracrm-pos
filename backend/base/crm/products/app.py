@@ -18,6 +18,8 @@ class ProductsApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "stock",
         "name": "Products",
         "summary": "Module allow work with products",
         "author": "FARA ERP",

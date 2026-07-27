@@ -31,6 +31,8 @@ class TasksApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "projects",
         "name": "Tasks",
         "summary": "Project and task management module",
         "author": "FARA ERP",

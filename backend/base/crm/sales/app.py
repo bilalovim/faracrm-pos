@@ -26,6 +26,8 @@ class SalesApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "sales",
         "name": "Sales",
         "summary": "Module allow work with sales",
         "author": "FARA ERP",

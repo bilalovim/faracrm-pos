@@ -19,7 +19,6 @@ from ..schemas.chat import (
     ChatPin,
 )
 from ..models.chat_member import ChatMember
-from ._system_messages import post_system_message
 
 log = logging.getLogger(__name__)
 
@@ -980,8 +979,7 @@ async def add_member(req: Request, chat_id: int, body: AddMemberInput):
     try:
         actor = await env.models.user.get(user_id, fields=["id", "name"])
         target = await env.models.user.get(body.user_id, fields=["id", "name"])
-        await post_system_message(
-            env,
+        await env.models.chat_message.post_system_message(
             chat_id=chat_id,
             event="member_added",
             params={
@@ -1117,8 +1115,7 @@ async def remove_member(req: Request, chat_id: int, member_id: int):
     try:
         actor = await env.models.user.get(user_id, fields=["id", "name"])
         target = await env.models.user.get(member_id, fields=["id", "name"])
-        await post_system_message(
-            env,
+        await env.models.chat_message.post_system_message(
             chat_id=chat_id,
             event="member_removed",
             params={
@@ -1158,8 +1155,7 @@ async def leave_chat(req: Request, chat_id: int):
     # Системное сообщение «actor покинул(а) чат»
     try:
         actor = await env.models.user.get(user_id, fields=["id", "name"])
-        await post_system_message(
-            env,
+        await env.models.chat_message.post_system_message(
             chat_id=chat_id,
             event="member_left",
             params={

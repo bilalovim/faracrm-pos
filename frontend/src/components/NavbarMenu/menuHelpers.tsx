@@ -36,6 +36,9 @@ export interface MenuGroup extends VisibilityProps {
   label: string;
   labelKey?: string;
   id: string;
+  // Стабильный ключ приложения (== ключ группы: communication, crm, …).
+  // По нему «Рабочее место» курирует, какие приложения показывать.
+  appKey?: string;
   Icon: IconType;
   submenus?: (MenuSimple | MenuCategory)[];
   to?: string;
@@ -236,6 +239,9 @@ function resolveGroup(cfg: GroupConfig): MenuGroup {
   const meta = MenuGroups[cfg.group];
   return {
     type: 'group',
+    // Ключ приложения = ключ группы в menuTree (communication, crm, …).
+    // Контракт с бэком: совпадает с App.menu_key и с Workspace.app_keys.
+    appKey: cfg.group,
     id: meta.id,
     Icon: meta.Icon,
     label: meta.label,
@@ -308,13 +314,22 @@ export function getVisibleMenuItems(
   items: MenuGroup[],
   userRoles: RoleRecord[] = [],
   isAdmin: boolean = false,
+  workspaceAppKeys: string[] | null = null,
 ): MenuGroup[] {
   const userRolesSet = new Set(userRoles.map(item => item.code));
 
   const result: MenuGroup[] = [];
 
   for (const group of items) {
-    if (!isVisible(group, userRolesSet, isAdmin)) continue;
+    // Видимость приложения (группы) определяет ТОЛЬКО «Рабочее место», не роли.
+    // Суперпользователь (is_admin) видит все приложения; у остальных нет РМ →
+    // приложений не видно (упрощённая логика). Курирование презентационное —
+    // доступ к данным держат ACL/Rules на бэке. Роли ещё фильтруют пункты
+    // ВНУТРИ приложения (категории/пункты ниже — через isVisible).
+    if (!isAdmin) {
+      if (!workspaceAppKeys) continue;
+      if (group.appKey && !workspaceAppKeys.includes(group.appKey)) continue;
+    }
 
     const filteredSubmenus = (group.submenus || [])
       .map(sub => {

@@ -373,6 +373,17 @@ export const modelsConfig: Record<string, ModelConfig> = {
         default: m.ViewKanbanCompany,
       })),
   },
+  workspace: {
+    menu: MenuGroups.settings,
+    list: () =>
+      import('@/fara_workspace/List').then(m => ({
+        default: m.ViewListWorkspace,
+      })),
+    form: () =>
+      import('@/fara_workspace/Form').then(m => ({
+        default: m.ViewFormWorkspace,
+      })),
+  },
   users: {
     menu: MenuGroups.settings,
     list: () => import('@/fara_users/List'),

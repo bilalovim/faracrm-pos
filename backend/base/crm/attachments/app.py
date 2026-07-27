@@ -17,6 +17,8 @@ class AttachmentsApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "files",
         "name": "Attachments",
         "summary": "Module allow work with binary data. Local and remote files.",
         "author": "FARA ERP",

@@ -190,6 +190,7 @@ async def signin(req: Request, response: Response, payload: UserSigninInput):
                 "layout_theme",
                 "is_admin",
                 "role_ids",
+                "workspace_id",
             ],
             fields_nested={"role_ids": ["id", "code"]},
         )
@@ -252,4 +253,30 @@ async def signin(req: Request, response: Response, payload: UserSigninInput):
             max_age=ttl,
             path="/",
         )
-        return session.json(exclude={"cookie_token"}, mode=JsonMode.FORM)
+        result = session.json(exclude={"cookie_token"}, mode=JsonMode.FORM)
+
+        # Активное «Рабочее место» → фронту: {id, name, app_keys}. app_keys —
+        # ui_menu_name приложений РМ (= ключи групп меню на фронте), собранные
+        # из m2m app_ids. Фронт по ним курирует лаунчер (нет РМ → ничего не
+        # видно, кроме is_admin) и показывает бейдж с именем РМ. Курирование
+        # презентационное — доступ к данным держат ACL/Rules на сервере.
+        if user_id.workspace_id:
+            ws = await env.models.workspace.search(
+                filter=[("id", "=", user_id.workspace_id.id)],
+                fields=["id", "name", "app_ids"],
+                fields_nested={"app_ids": ["id", "ui_menu_name"]},
+                limit=1,
+            )
+            if ws:
+                ws = ws[0]
+                result.setdefault("user_id", {})["workspace_id"] = {
+                    "id": ws.id,
+                    "name": ws.name,
+                    "app_keys": [
+                        a.ui_menu_name
+                        for a in (ws.app_ids or [])
+                        if a.ui_menu_name
+                    ],
+                }
+
+        return result

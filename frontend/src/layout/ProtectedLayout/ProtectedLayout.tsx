@@ -41,8 +41,13 @@ export default function CollapseSideBar() {
       getVisibleMenuItems(
         session?.user_id?.role_ids || [],
         session?.user_id?.is_admin || false,
+        session?.user_id?.workspace_id?.app_keys ?? null,
       ),
-    [session?.user_id?.role_ids, session?.user_id?.is_admin],
+    [
+      session?.user_id?.role_ids,
+      session?.user_id?.is_admin,
+      session?.user_id?.workspace_id,
+    ],
   );
 
   // Циклическое переключение состояний

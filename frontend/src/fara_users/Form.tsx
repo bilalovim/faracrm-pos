@@ -199,6 +199,14 @@ export default function ViewFormUsers(props: ViewFormProps) {
                 label={t('fields.layout_theme', 'Тема интерфейса')}
               />
             </FormRow>
+            {/* «Рабочее место» — какие приложения видит пользователь в
+                лаунчере (Many2one → workspace). Админу не назначается. */}
+            <FormRow cols={2}>
+              <Field
+                name="workspace_id"
+                label={t('workspace:fields.workspace_id', 'Рабочее место')}
+              />
+            </FormRow>
           </FormTab>
         </FormTabs>
       </Form>

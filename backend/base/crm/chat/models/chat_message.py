@@ -1,6 +1,8 @@
 # Copyright 2025 FARA CRM
 # Chat module - message model
 
+import json
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,8 @@ from backend.base.crm.security.polymorphic_parent import (
 )
 from backend.base.system.core.enviroment import env
 from backend.base.crm.users.audit_mixin import AuditMixin
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from backend.base.crm.users.models.users import User
@@ -403,6 +407,74 @@ class ChatMessage(AuditMixin, PolymorphicParentMixin):
         #         )
 
         return message
+
+    @hybridmethod
+    async def post_system_message(
+        self,
+        chat_id: int,
+        event: str,
+        params: dict | None = None,
+    ) -> None:
+        """Создать системное сообщение чата и разослать подписчикам через WS.
+
+        Системные сообщения — события уровня чата (участник добавлен/удалён,
+        покинул чат и т.п.), которые на фронте рисуются пилюлей в стиле
+        Telegram: без аватара, без пузыря, без автора.
+
+        В `body` кладётся JSON `{"event": "...", "params": {...}}` —
+        человекочитаемую строку формирует фронт через i18n (локализация без
+        миграций, устойчивость к переименованию пользователей). На бэке
+        сохраняется с message_type="system" и author_user_id=SYSTEM_USER_ID.
+
+        Ошибки логируются и глотаются: сбой в косметике не должен ронять
+        основную операцию чата (добавление/удаление участника и т.п.).
+        """
+        from backend.base.crm.users.models.users import SYSTEM_USER_ID
+
+        try:
+            body = json.dumps(
+                {"event": event, "params": params or {}}, ensure_ascii=False
+            )
+
+            message = await env.models.chat_message.post_message(
+                chat_id=chat_id,
+                author_user_id=SYSTEM_USER_ID,
+                body=body,
+                message_type="system",
+            )
+
+            await env.apps.chat.chat_manager.send_to_chat(
+                chat_id=chat_id,
+                message={
+                    "type": "new_message",
+                    "chat_id": chat_id,
+                    "message": {
+                        "id": message.id,
+                        "body": body,
+                        "message_type": "system",
+                        "author": {
+                            "id": SYSTEM_USER_ID,
+                            "name": None,
+                            "type": "user",
+                        },
+                        "create_datetime": message.create_datetime.isoformat(),
+                        "starred": False,
+                        "pinned": False,
+                        "is_edited": False,
+                        "is_read": False,
+                        "attachments": [],
+                    },
+                },
+            )
+        except Exception as exc:
+            _log.warning(
+                "post_system_message failed: chat_id=%s event=%s "
+                "params=%s err=%s",
+                chat_id,
+                event,
+                params,
+                exc,
+            )
 
     @hybridmethod
     async def get_chat_messages(

@@ -27,6 +27,8 @@ class LeadsApp(App):
     """
 
     info = {
+        "ui_menu": True,
+        "ui_menu_name": "crm",
         "name": "Leads",
         "summary": "Module allow work with leads",
         "author": "FARA ERP",
