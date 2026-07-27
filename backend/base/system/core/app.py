@@ -8,8 +8,8 @@ log = logging.getLogger(__package__)
 
 
 class AppInfo(TypedDict):
-    ui_menu: bool
-    ui_menu_name: str
+    ui_menu: NotRequired[bool]
+    ui_menu_name: NotRequired[str]
     name: str
     summary: str
     author: str

@@ -149,7 +149,7 @@ export function ViewFormStorageYandex() {
             </li>
             <li>
               В качестве Redirect URI укажите{' '}
-              <code>{`{ваш_домен}/yandex/callback`}</code>
+              <code>{`{ваш_домен}/api/yandex/callback`}</code>
             </li>
             <li>Скопируйте Client ID и Client Secret в поля ниже</li>
             <li>Сохраните хранилище и нажмите "Авторизовать"</li>
