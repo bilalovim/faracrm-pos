@@ -1,32 +1,28 @@
 import { Suspense, lazy, useMemo } from 'react';
 import LoadingScreen from '@components/LoadingScreen/LoadingScreen';
 import { useSelector } from 'react-redux';
-import ProtectedLayout from './ProtectedLayout/ProtectedLayout';
 import { selectIsLoggedIn } from '@/slices/authSlice';
 import { SavedFiltersPreloader } from '@/components/SearchFilter';
-import {
-  LayoutThemeProvider,
-  useLayoutTheme,
-  ModernLayout,
-} from '@/components/ModernTheme';
+import { LayoutThemeProvider, ModernLayout } from '@/components/ModernTheme';
 
-// Компонент выбора layout в зависимости от темы
+// Компонент выбора layout в зависимости от темы.
+//
+// ВРЕМЕННО: классическая тема (ProtectedLayout) СКРЫТА у всех — рендерим
+// только ModernLayout. Импорты ProtectedLayout и useLayoutTheme здесь убраны;
+// сам ProtectedLayout и его инфраструктура (NavbarMenu, SidebarContext/
+// SidebarToggle) в коде сохранены, просто больше не используются из точки
+// входа. LayoutThemeProvider оставлен — контекст темы всё ещё нужен UserMenu.
+//
+// Чтобы вернуть classic — восстановить импорты и ветвление:
+//   import ProtectedLayout from './ProtectedLayout/ProtectedLayout';
+//   import { useLayoutTheme } from '@/components/ModernTheme';
+//   const { layoutTheme } = useLayoutTheme();
+//   if (layoutTheme === 'classic') return (<><SavedFiltersPreloader/><ProtectedLayout/></>);
 function ThemedLayout() {
-  const { layoutTheme } = useLayoutTheme();
-
-  if (layoutTheme === 'modern') {
-    return (
-      <>
-        <SavedFiltersPreloader />
-        <ModernLayout />
-      </>
-    );
-  }
-
   return (
     <>
       <SavedFiltersPreloader />
-      <ProtectedLayout />
+      <ModernLayout />
     </>
   );
 }

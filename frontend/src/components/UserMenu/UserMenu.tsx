@@ -72,6 +72,10 @@ function UserMenu() {
 
   // Тема layout
   const { layoutTheme, setLayoutTheme } = useLayoutTheme();
+  // ВРЕМЕННО: классическая тема (ProtectedLayout) скрыта у всех — Layout.tsx
+  // рендерит только modern, поэтому переключатель темы прячем (иначе «мёртвая»
+  // кнопка). Возврат: true + вернуть ветку classic в Layout.tsx.
+  const SHOW_LAYOUT_THEME_SWITCHER = false;
 
   const { data: userData } = useReadQuery(
     {
@@ -325,7 +329,8 @@ function UserMenu() {
           </Menu.Dropdown>
         </Menu>
 
-        {/* Тема интерфейса - подменю */}
+        {/* Тема интерфейса — подменю. ВРЕМЕННО СКРЫТО (см. флаг выше). */}
+        {SHOW_LAYOUT_THEME_SWITCHER && (
         <Menu
           trigger={subMenuTrigger}
           position="left-start"
@@ -377,6 +382,7 @@ function UserMenu() {
             </Menu.Item>
           </Menu.Dropdown>
         </Menu>
+        )}
 
         {/* Уведомления - подменю */}
         <Menu
