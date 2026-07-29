@@ -168,12 +168,14 @@ class FileStoreStrategy(StorageStrategyBase):
         """
         Build file path for storage.
 
-        Structure: filestore/<parent_id>/<attachment_id>/<filename>
+        Structure: filestore/<parent_id>/<attachment_id>-<filename>
 
-        Подкаталог по id записи делает путь уникальным по построению: имя
-        задаёт отправитель ("Договор.pdf" шлют все подряд), и раньше второй
-        файл молча затирал первый. Пользователю имя всё равно отдаётся из
-        базы (attachment.name), а не с диска.
+        Префикс по id записи в ИМЕНИ файла делает путь уникальным по
+        построению: имя задаёт отправитель ("Договор.pdf" шлют все подряд), и
+        без префикса второй файл молча затирал первый. Раньше для этого
+        заводили отдельную подпапку <attachment_id>/ — префикс в имени даёт ту
+        же уникальность без лишнего уровня вложенности. Пользователю имя всё
+        равно отдаётся из базы (attachment.name), а не с диска.
         """
         base_path = await self._get_base_path(storage)
         # Безопасное имя файла (Path Traversal Protection)
@@ -182,8 +184,8 @@ class FileStoreStrategy(StorageStrategyBase):
         parts = [base_path]
         if parent_id:
             parts.append(str(parent_id))
-        parts.append(str(attachment.id))
-        parts.append(safe_name)
+        # id записи — префиксом к имени файла (а не отдельной подпапкой)
+        parts.append(f"{attachment.id}-{safe_name}")
 
         return os.path.join(*parts)
 
@@ -342,10 +344,10 @@ class FileStoreStrategy(StorageStrategyBase):
 
         # If only filename changed (no content), rename
         elif filename and filename != attachment.name and old_path:
-            # Только переименование
-            new_path = os.path.join(
-                os.path.dirname(old_path), sanitize_filename(filename)
-            )
+            # Только переименование. Сохраняем префикс id записи в имени файла
+            # (тот же приём уникальности, что и в _get_file_path).
+            new_name = f"{attachment.id}-{sanitize_filename(filename)}"
+            new_path = os.path.join(os.path.dirname(old_path), new_name)
             if await aiofiles.os.path.exists(old_path):
                 await aiofiles.os.rename(old_path, new_path)
                 result["storage_file_url"] = new_path

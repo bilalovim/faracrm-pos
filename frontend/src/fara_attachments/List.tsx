@@ -26,7 +26,8 @@ import {
 interface AttachmentRoute {
   id: number;
   name: string;
-  model: string | null;
+  // Связь на реестр моделей (models): { id, name } либо null для fallback.
+  model_id: { id: number; name: string } | null;
   priority: number;
   pattern_root: string;
   pattern_record: string;
@@ -246,12 +247,12 @@ export function ViewListAttachmentsRoute() {
         )}
       />
       <Field
-        name="model"
+        name="model_id"
         label={t('fields.model')}
         render={value =>
           value ? (
             <Badge size="sm" variant="light" color="blue">
-              {value}
+              {value.name ?? value.id}
             </Badge>
           ) : (
             <Badge size="sm" variant="light" color="orange">

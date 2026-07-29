@@ -383,6 +383,20 @@ export const crudApi = createApi({
       }),
       providesTags: (result, error, model) => [{ type: 'Fields', id: model }],
     }),
+
+    // Поля модели по её env-имени (значение models.name) — для конструктора
+    // шаблонов папок маршрута вложений. Позволяет предлагать выбор только
+    // существующих полей выбранной модели вместо ручного ввода {поле}.
+    // Бэкенд: GET /attachments/model_fields/{model_name}.
+    getRouteModelFields: build.query<FieldInfoResponse[], string>({
+      query: modelName => ({
+        url: `/attachments/model_fields/${modelName}`,
+        method: 'GET',
+      }),
+      providesTags: (result, error, modelName) => [
+        { type: 'Fields', id: `route-model:${modelName}` },
+      ],
+    }),
   }),
 });
 
@@ -408,4 +422,5 @@ export const {
   useGetOnchangeFieldsQuery,
   useExecuteOnchangeMutation,
   useGetFieldsQuery,
+  useGetRouteModelFieldsQuery,
 } = crudApi;

@@ -195,20 +195,33 @@ class SecurityApp(Service):
             log.info("Registered app icons: %s", ", ".join(registered))
 
     async def _init_models(self, env: Environment):
-        """Создаёт записи в таблице models для всех моделей."""
+        """Создаёт записи в таблице models для всех моделей.
+
+        Помимо name сохраняем table (__table__ модели) — так по связи model_id
+        сразу доступно имя таблицы (напр. в маршрутах вложений), без обратного
+        маппинга env-имя -> таблица. Для уже существующих записей table
+        бэкфиллится идемпотентно.
+        """
         models_names = env.models._get_models_names()
         if not models_names:
             return
 
         exist_models = await env.models.model.search(
             filter=[("name", "in", models_names)],
-            fields=["id", "name"],
+            fields=["id", "name", "table_name"],
         )
-        exist_names = {m.name for m in exist_models}
+        exist_by_name = {m.name: m for m in exist_models}
 
         for model_name in models_names:
-            if model_name not in exist_names:
-                await env.models.model.create(payload=Model(name=model_name))
+            table = env.models._get_model(model_name).__table__
+            existing = exist_by_name.get(model_name)
+            if existing is None:
+                await env.models.model.create(
+                    payload=Model(name=model_name, table_name=table)
+                )
+            elif table and existing.table_name != table:
+                # Бэкфилл имени таблицы у ранее созданных записей реестра
+                await existing.update(env.models.model(table_name=table))
 
     async def _init_apps(self, env: Environment):
         """Создаёт/обновляет записи в таблице apps из env.apps.

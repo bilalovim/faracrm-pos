@@ -67,6 +67,27 @@ def resize_image(
     return output.getvalue()
 
 
+@router_private.get("/attachments/model_fields/{model_name}")
+async def attachment_route_model_fields(req: Request, model_name: str):
+    """Список полей модели по её env-имени (значение models.name реестра).
+
+    Используется UI-конструктором шаблонов папок маршрута: чтобы предлагать
+    выбор ТОЛЬКО существующих полей выбранной модели вместо ручного ввода
+    конструкций вида ``{поле}``.
+    """
+    env: Environment = req.app.state.env
+
+    model_cls = env.models._get_model(model_name)
+
+    field_names = [
+        name
+        for name, field in model_cls.get_fields().items()
+        if not field.private
+    ]
+
+    return model_cls.get_fields_info_list(field_names)
+
+
 @router_private.get("/attachments/{attachment_id}")
 async def attachment_content(req: Request, attachment_id: Id):
     """Скачать файл"""

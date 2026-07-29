@@ -7,6 +7,7 @@ class Model(DotModel):
 
     id: int = Integer(primary_key=True)
     name: str = Char()
+    table_name: str = Char()
 
     # acl_ids: list[AccessList] = One2many(
     #     store=False, relation_table=AccessList, relation_table_field="model_id"

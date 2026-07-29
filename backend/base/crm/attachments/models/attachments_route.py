@@ -13,13 +13,14 @@ from backend.base.system.dotorm.dotorm.fields import (
     JSONField,
     Many2one,
 )
-from backend.base.system.dotorm.dotorm.model import DotModel, Model
+from backend.base.system.dotorm.dotorm.model import DotModel
 from backend.base.system.core.enviroment import env
 from backend.base.crm.attachments.strategies import get_strategy
 from .attachments_cache import AttachmentCache
 
 if TYPE_CHECKING:
     from .attachments_storage import AttachmentStorage
+    from backend.base.crm.security.models.models import Model
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,13 @@ class AttachmentRoute(DotModel):
         help="Human readable name for the route",
     )
 
-    model: str | None = Char(
+    # РАНЬШЕ было текстовое поле `model` (имя таблицы строкой). Теперь связь на
+    # реестр моделей — чтобы выбирать модель из списка, а не печатать вручную.
+    # Пусто (NULL) = fallback-маршрут для всех моделей (как раньше model=None).
+    model_id: "Model | None" = Many2one(
+        relation_table=lambda: env.models.model,
         string="Model",
-        help="Model name (e.g., 'sale', 'lead'). None = fallback route",
+        help="Model (from models registry). Empty = fallback route for all models",
     )
 
     priority: int = Integer(
@@ -119,6 +124,16 @@ class AttachmentRoute(DotModel):
         default=True,
     )
 
+    def _model_table(self) -> str | None:
+        """Имя таблицы модели маршрута (аналог прежнего self.model), либо None.
+
+        model_id.table_name заполняется при сидинге реестра (_init_models), а
+        search грузит store-поля связи — поэтому имя таблицы доступно напрямую.
+        res_model вложений — тоже имя таблицы, сравнения/фильтры корректны.
+        (Поле названо table_name, а не table: table — зарезервированное слово.)
+        """
+        return self.model_id.table_name if self.model_id else None
+
     # ========================================================================
     # Template rendering
     # ========================================================================
@@ -130,7 +145,7 @@ class AttachmentRoute(DotModel):
     def _render_template(
         self,
         template: str,
-        record: Model | None = None,
+        record: DotModel | None = None,
         extra_context: dict[str, Any] | None = None,
     ) -> str:
         """
@@ -147,8 +162,10 @@ class AttachmentRoute(DotModel):
         if not template:
             return ""
 
-        # Для дефолтного маршрута model берём из extra_context (res_model)
-        model_name = self.model
+        # Для дефолтного маршрута model берём из extra_context (res_model).
+        # Раньше здесь было self.model (текст); теперь модель — связь, поэтому
+        # имя таблицы получаем из model_id (None у дефолтного маршрута).
+        model_name = self._model_table()
         context = {
             "model": model_name or "",
             "route_id": self.id,
@@ -158,6 +175,10 @@ class AttachmentRoute(DotModel):
             context.update(extra_context)
             if not model_name:
                 model_name = extra_context.get("res_model")
+
+        # {table} — имя таблицы модели (для дефолтного маршрута = res_model).
+        # Токен статичный, добавлен для конструктора корневой папки на фронте.
+        context.setdefault("table", model_name or "")
 
         # Add record fields if provided
         if record:
@@ -231,25 +252,32 @@ class AttachmentRoute(DotModel):
         """
         if res_model and res_id:
             # 1. Try specific routes first (model matches)
-            specific_routes = await cls.search(
-                filter=[
-                    ("active", "=", True),
-                    ("model", "=", res_model),
-                ],
-                # fields_nested={"storage_id": ["id", "type", "active"]},
-                sort="priority",
-                order="DESC",
+            # res_model — имя таблицы; в реестре хранится models.table_name,
+            # поэтому находим запись реестра напрямую по table_name.
+            model_recs = await env.models.model.search(
+                filter=[("table_name", "=", res_model)], fields=["id"], limit=1
             )
 
-            for route in specific_routes:
-                if await route._check_record_in_filter(res_id):
-                    return route
+            if model_recs:
+                specific_routes = await cls.search(
+                    filter=[
+                        ("active", "=", True),
+                        ("model_id", "=", model_recs[0].id),
+                    ],
+                    # fields_nested={"storage_id": ["id", "type", "active"]},
+                    sort="priority",
+                    order="DESC",
+                )
+
+                for route in specific_routes:
+                    if await route._check_record_in_filter(res_id):
+                        return route
 
         # 2. Then try fallback routes (model=None)
         fallback_routes = await cls.search(
             filter=[
                 ("active", "=", True),
-                ("model", "=", None),
+                ("model_id", "=", None),
             ],
             sort="priority",
             order="DESC",
@@ -261,18 +289,18 @@ class AttachmentRoute(DotModel):
         return None
 
     async def _check_record_in_filter(self, res_id: int) -> bool:
-        if isinstance(self.filter, list) and self.filter and self.model:
-            ids = await env.models._get_model(self.model).search(
+        if isinstance(self.filter, list) and self.filter and self.model_id:
+            ids = await env.models._get_model(self.model_id.name).search(
                 filter=self.filter
             )
             return res_id in ids
         return True
 
     async def _get_records_ids(self) -> list[int]:
-        if isinstance(self.filter, list) and self.filter and self.model:
-            record_ids = await env.models._get_model(self.model).search(
-                filter=self.filter, fields=["id"]
-            )
+        if isinstance(self.filter, list) and self.filter and self.model_id:
+            record_ids = await env.models._get_model(
+                self.model_id.name
+            ).search(filter=self.filter, fields=["id"])
             return [record.id for record in record_ids]
         return []
 
@@ -293,7 +321,9 @@ class AttachmentRoute(DotModel):
 
         # Render folder name
         folder_name = (
-            self.render_root_folder_name(res_model) or self.model or res_model
+            self.render_root_folder_name(res_model)
+            or self._model_table()
+            or res_model
         )
 
         # Get strategy and create folder
@@ -304,7 +334,7 @@ class AttachmentRoute(DotModel):
 
         metadata = {
             "route_id": str(self.id),
-            "res_model": self.model or res_model,
+            "res_model": self._model_table() or res_model,
             "storage_id": str(storage.id),
         }
 
@@ -391,7 +421,7 @@ class AttachmentRoute(DotModel):
             return
 
         folder_id, old_name = await AttachmentCache.get_folder(
-            self.id, self.model or "default"
+            self.id, self._model_table() or "default"
         )
         if not folder_id:
             return
@@ -409,7 +439,7 @@ class AttachmentRoute(DotModel):
 
             await AttachmentCache.set_folder(
                 route_id=self.id,
-                res_model=self.model or "default",
+                res_model=self._model_table() or "default",
                 folder_id=folder_id,
                 folder_name=new_name,
             )
@@ -437,7 +467,7 @@ class AttachmentRoute(DotModel):
         from .attachments import Attachment
 
         filter_common = [
-            ("res_model", "=", self.model),
+            ("res_model", "=", self._model_table()),
             ("storage_id", "in", [None, storage_id]),
             ("storage_file_id", "=", None),
         ]
@@ -472,7 +502,10 @@ class AttachmentRoute(DotModel):
         """
         # Check if default route already exists
         existing = await cls.search(
-            filter=[("storage_id", "=", storage_id.id), ("model", "=", None)],
+            filter=[
+                ("storage_id", "=", storage_id.id),
+                ("model_id", "=", None),
+            ],
             limit=1,
         )
 
@@ -481,7 +514,7 @@ class AttachmentRoute(DotModel):
 
         default_route = AttachmentRoute()
         default_route.name = "Default Route"
-        default_route.model = None
+        # model_id не задаём — fallback-маршрут для всех моделей (было model=None)
         default_route.priority = 0
         default_route.pattern_root = "{model}"
         default_route.pattern_record = "{id}-{name}"

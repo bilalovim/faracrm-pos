@@ -26,7 +26,9 @@ import { useTranslation } from 'react-i18next';
 interface AttachmentRoute {
   id: number;
   name: string;
-  model: string | null;
+  // РАНЬШЕ было текстовое `model: string | null`. Теперь связь на реестр
+  // моделей (models): { id, name } либо null для fallback-маршрута.
+  model_id: { id: number; name: string } | null;
   priority: number;
   pattern_root: string;
   pattern_record: string;
@@ -143,7 +145,7 @@ export function ViewFormAttachmentsStorage(props: ViewFormProps) {
               mb="md">
               <Text size="sm">
                 Маршруты проверяются в порядке приоритета (высший первым).
-                Маршрут с <Code>model=null</Code> и <Code>priority=0</Code>{' '}
+                Маршрут с <Code>model=пусто</Code> и <Code>priority=0</Code>{' '}
                 используется как fallback для всех моделей.
               </Text>
             </Alert>
@@ -151,7 +153,7 @@ export function ViewFormAttachmentsStorage(props: ViewFormProps) {
             <Field name="route_ids">
               <Field name="id" />
               <Field name="name" />
-              <Field name="model" />
+              <Field name="model_id" />
               <Field name="priority" />
               <Field name="storage_id" />
               <Field name="pattern_root" />
@@ -205,11 +207,13 @@ export function ViewFormAttachmentsRoute(props: ViewFormProps) {
           <Text size="xs">
             Высший приоритет проверяется первым. Fallback маршрут (для всех
             моделей) должен иметь <Code>priority=0</Code> и{' '}
-            <Code>model=пусто</Code>
+            <Code>модель=пусто</Code>
           </Text>
         </Alert>
         <FormRow cols={2}>
-          <Field name="model" label="Модель (пусто = все модели)" />
+          {/* Модель теперь выбирается из списка (связь), а не вводится текстом.
+              Пусто = маршрут применяется ко всем моделям. */}
+          <Field name="model_id" label="Модель (пусто = все модели)" />
           <Field name="storage_id" label="Хранилище" />
         </FormRow>
         <Field name="active" label="Активен" />
@@ -222,36 +226,39 @@ export function ViewFormAttachmentsRoute(props: ViewFormProps) {
           icon={<IconFolder size={16} />}>
           <Alert
             icon={<IconInfoCircle size={16} />}
-            title="Доступные переменные"
+            title="Как это работает"
             color="blue"
             mb="md">
             <Text size="sm">
-              <strong>Для корневой папки:</strong> <Code>{'{model}'}</Code>,{' '}
-              <Code>{'{table}'}</Code>
+              Шаблоны собираются из <strong>тегов</strong> — вводить{' '}
+              <Code>{'{...}'}</Code> вручную не нужно.
             </Text>
             <Text size="sm" mt="xs">
-              <strong>Для папки записи:</strong> <Code>{'{id}'}</Code>,{' '}
-              <Code>{'{zfill(id)}'}</Code> (с нулями), и любые поля записи:{' '}
-              <Code>{'{name}'}</Code>, <Code>{'{code}'}</Code> и т.д.
+              <strong>Корневая папка:</strong> только статичные теги{' '}
+              <Code>{'{model}'}</Code>, <Code>{'{table}'}</Code>.
+            </Text>
+            <Text size="sm" mt="xs">
+              <strong>Папка записи:</strong> поля выбранной модели плюс{' '}
+              <Code>{'{id}'}</Code>, <Code>{'{zfill(id)}'}</Code>. Если модель
+              не выбрана (глобальный маршрут) — обычный текстовый ввод.
             </Text>
           </Alert>
 
           <FormSection title="Шаблон корневой папки">
-            <Field name="pattern_root" label="Шаблон имени корневой папки" />
-            <Text size="xs" c="dimmed" mt="xs">
-              Пример: "Sales Orders" или "{'{model}'}" → создаст папку с именем
-              модели
-            </Text>
+            <Field
+              name="pattern_root"
+              widget="patternRoot"
+              label="Шаблон имени корневой папки"
+            />
           </FormSection>
 
           <FormSection title="Шаблон папки записи">
-            <FormRow cols={2}>
-              <Field name="pattern_record" label="Шаблон имени папки записи" />
-              <Field name="flat" label="Плоская структура (без подпапок)" />
-            </FormRow>
-            <Text size="xs" c="dimmed" mt="xs">
-              Пример: "{'{zfill(id)}'}-{'{name}'}" → "0000001-John Doe"
-            </Text>
+            <Field
+              name="pattern_record"
+              widget="patternRecord"
+              label="Шаблон имени папки записи"
+            />
+            <Field name="flat" label="Плоская структура (без подпапок)" />
           </FormSection>
         </FormTab>
 
