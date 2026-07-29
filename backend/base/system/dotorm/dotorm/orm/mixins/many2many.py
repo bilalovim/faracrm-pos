@@ -90,14 +90,22 @@ class OrmMany2manyMixin(_Base):
     async def link_many2many(
         self, field: Many2many, values: list, session=None
     ):
-        """Link records in M2M relation."""
+        """Link records in M2M relation.
+
+        Идемпотентно: ON CONFLICT DO NOTHING отбрасывает пары, которые уже
+        есть в связующей таблице (защита от дублей - сидеры на каждом старте,
+        повторные e2e-прогоны, повторная привязка той же пары)
+        """
         cls = self.__class__
         session = cls._get_db_session(session)
+        if not values:
+            return None
         query_placeholders = ", ".join(["%s"] * len(values[0]))
         stmt = f"""INSERT INTO {field.many2many_table}
         ({field.column2}, {field.column1})
         VALUES
         ({query_placeholders})
+        ON CONFLICT DO NOTHING
         """
         return await session.execute(stmt, [values], cursor="executemany")
 

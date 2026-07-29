@@ -222,10 +222,20 @@ class DDLMixin(_Base):
                     many2many_fields_fk.append((fk_name2, fk_sql2))
                     await session.execute(create_table_sql)
 
-                    # создание составного индекса для m2m таблицы
-                    m2m_index_name = f"idx_{field.many2many_table}_{field.column1}_{field.column2}"
-                    index_statements.append(
-                        f'CREATE INDEX IF NOT EXISTS "{m2m_index_name}" ON "{field.many2many_table}" ("{field.column1}", "{field.column2}")'
+                    # чистим уже накопленные дубли иначе CREATE UNIQUE упадёт
+                    # когда дублей нет, DELETE удаляет 0 строк.
+                    m2m = field.many2many_table
+                    c1, c2 = field.column1, field.column2
+                    await session.execute(
+                        f'DELETE FROM "{m2m}" a USING "{m2m}" b '
+                        f"WHERE a.ctid < b.ctid "
+                        f'AND a."{c1}" = b."{c1}" AND a."{c2}" = b."{c2}"'
+                    )
+                    # Уникальность пары (col1, col2): связующая таблица — это
+                    # множество связей, повтор = дубль
+                    await session.execute(
+                        f'CREATE UNIQUE INDEX IF NOT EXISTS "uq_{m2m}_{c1}_{c2}" '
+                        f'ON "{m2m}" ("{c1}", "{c2}")'
                     )
 
         # Составные индексы из __indexes__ класса модели.
