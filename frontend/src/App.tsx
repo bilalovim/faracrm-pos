@@ -1,5 +1,5 @@
 import { store } from '@store/store';
-import { MantineProvider } from '@mantine/core';
+import { MantineProvider, v8CssVariablesResolver } from '@mantine/core';
 import { DatesProvider } from '@mantine/dates';
 import { Notifications } from '@mantine/notifications';
 import { Provider } from 'react-redux';
@@ -16,8 +16,11 @@ export default function App() {
   // i18n.language может быть 'en-US' — dayjs/Mantine ждут 'en'
   const datesLocale = (i18n.language || 'en').split('-')[0];
 
+  // Резолвер возвращает дореформенный (v8) вид.
   return (
-    <MantineProvider theme={theme}>
+    <MantineProvider
+      theme={theme}
+      cssVariablesResolver={v8CssVariablesResolver}>
       <DatesProvider settings={{ locale: datesLocale, firstDayOfWeek: 1 }}>
         <Notifications position="bottom-right" zIndex={1000} />
         <Provider store={store}>

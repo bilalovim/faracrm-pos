@@ -5,7 +5,6 @@ import {
   Menu,
   Text,
   UnstyledButton,
-  useMantineColorScheme,
   Image,
   Box,
 } from '@mantine/core';
@@ -59,9 +58,7 @@ interface Language {
 }
 
 function UserMenu() {
-  const { colorScheme } = useMantineColorScheme();
   const { i18n, t } = useTranslation();
-  const dark = colorScheme === 'dark';
   const dispatch = useDispatch();
   const [triggerLogout] = useLogoutMutation();
   const navigate = useNavigate();
@@ -263,7 +260,7 @@ function UserMenu() {
               alt={userName}
               radius="xl"
               size={32}
-              color={dark ? 'blue' : 'blue.6'}>
+              color="blue">
               {!avatarSrc && userName.charAt(0).toUpperCase()}
             </Avatar>
             <Text fw={500} size="sm" lh={1} mr={3} visibleFrom="sm">
@@ -333,57 +330,60 @@ function UserMenu() {
 
         {/* Тема интерфейса — подменю. ВРЕМЕННО СКРЫТО (см. флаг выше). */}
         {SHOW_LAYOUT_THEME_SWITCHER && (
-        <Menu
-          trigger={subMenuTrigger}
-          position="left-start"
-          offset={2}
-          withinPortal
-          shadow="md">
-          <Menu.Target>
-            <Box>
+          <Menu
+            trigger={subMenuTrigger}
+            position="left-start"
+            offset={2}
+            withinPortal
+            shadow="md">
+            <Menu.Target>
+              <Box>
+                <Menu.Item
+                  leftSection={
+                    <IconLayout
+                      style={{ width: 16, height: 16 }}
+                      stroke={1.5}
+                    />
+                  }
+                  rightSection={
+                    <IconChevronRight
+                      style={{ width: 14, height: 14 }}
+                      stroke={1.5}
+                    />
+                  }>
+                  {t('common:layoutTheme', 'Тема интерфейса')}
+                </Menu.Item>
+              </Box>
+            </Menu.Target>
+            <Menu.Dropdown>
               <Menu.Item
                 leftSection={
-                  <IconLayout style={{ width: 16, height: 16 }} stroke={1.5} />
-                }
-                rightSection={
-                  <IconChevronRight
-                    style={{ width: 14, height: 14 }}
+                  <IconLayoutSidebar
+                    style={{ width: 16, height: 16 }}
                     stroke={1.5}
                   />
+                }
+                onClick={() => handleLayoutThemeChange('classic')}
+                className={
+                  layoutTheme === 'classic' ? classes.activeItem : undefined
                 }>
-                {t('common:layoutTheme', 'Тема интерфейса')}
+                {t('common:themeClassic', 'Классическая')}
               </Menu.Item>
-            </Box>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item
-              leftSection={
-                <IconLayoutSidebar
-                  style={{ width: 16, height: 16 }}
-                  stroke={1.5}
-                />
-              }
-              onClick={() => handleLayoutThemeChange('classic')}
-              className={
-                layoutTheme === 'classic' ? classes.activeItem : undefined
-              }>
-              {t('common:themeClassic', 'Классическая')}
-            </Menu.Item>
-            <Menu.Item
-              leftSection={
-                <IconLayoutNavbar
-                  style={{ width: 16, height: 16 }}
-                  stroke={1.5}
-                />
-              }
-              onClick={() => handleLayoutThemeChange('modern')}
-              className={
-                layoutTheme === 'modern' ? classes.activeItem : undefined
-              }>
-              {t('common:themeModern', 'Современная')}
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
+              <Menu.Item
+                leftSection={
+                  <IconLayoutNavbar
+                    style={{ width: 16, height: 16 }}
+                    stroke={1.5}
+                  />
+                }
+                onClick={() => handleLayoutThemeChange('modern')}
+                className={
+                  layoutTheme === 'modern' ? classes.activeItem : undefined
+                }>
+                {t('common:themeModern', 'Современная')}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         )}
 
         {/* Уведомления - подменю */}
