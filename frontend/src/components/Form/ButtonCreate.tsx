@@ -226,7 +226,7 @@ export function ButtonCreate({
               // значением) и закрываем модалку. valuesToCreate уже прошёл
               // prepareValuesToSave (id удалён, M2O → числа), поэтому
               // разворачиваем его поверх id — для отображения хватит name.
-              onCreated({ id: data.id, ...valuesToCreate });
+              onCreated({ ...valuesToCreate, id: data.id });
               modalClose?.();
             } else {
               form.reset();

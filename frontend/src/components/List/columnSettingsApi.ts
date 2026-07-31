@@ -31,7 +31,7 @@ const columnSettingsApi = crudApi.injectEndpoints({
       }),
       transformResponse: (response: { data: ColumnSettingDTO[] }) =>
         response.data?.[0] ?? null,
-      providesTags: (result, error, modelName) => [
+      providesTags: (_result, _error, modelName) => [
         { type: 'ColumnSettings', id: modelName },
       ],
     }),
@@ -46,7 +46,7 @@ const columnSettingsApi = crudApi.injectEndpoints({
         method: 'POST',
         body: data,
       }),
-      invalidatesTags: (result, error, data) => [
+      invalidatesTags: (_result, _error, data) => [
         { type: 'ColumnSettings', id: data.model_name },
       ],
     }),
@@ -61,7 +61,7 @@ const columnSettingsApi = crudApi.injectEndpoints({
         method: 'PUT',
         body: { columns },
       }),
-      invalidatesTags: (result, error, { model_name }) => [
+      invalidatesTags: (_result, _error, { model_name }) => [
         { type: 'ColumnSettings', id: model_name },
       ],
     }),
@@ -75,7 +75,7 @@ const columnSettingsApi = crudApi.injectEndpoints({
         url: `/auto/column_settings/${id}`,
         method: 'DELETE',
       }),
-      invalidatesTags: (result, error, { model_name }) => [
+      invalidatesTags: (_result, _error, { model_name }) => [
         { type: 'ColumnSettings', id: model_name },
       ],
     }),

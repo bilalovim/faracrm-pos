@@ -60,7 +60,7 @@ export function ConnectorFilter({
   onChange,
   availableTypes = ['all', 'internal', 'telegram', 'email'],
 }: ConnectorFilterProps) {
-  const { t } = useTranslation('chat');
+  useTranslation('chat');
 
   const data = availableTypes.map(type => ({
     value: type,

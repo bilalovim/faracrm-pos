@@ -57,7 +57,7 @@ export function NavbarMenuCategory({
           size={14}
         />
       </UnstyledButton>
-      <Collapse in={opened}>
+      <Collapse expanded={opened}>
         <MenuItems menus={submenus} />
       </Collapse>
     </div>

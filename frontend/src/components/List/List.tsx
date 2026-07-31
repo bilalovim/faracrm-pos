@@ -33,7 +33,6 @@ import { Toolbar } from './Toolbar';
 import { ColumnsMenu } from './ColumnsMenu';
 import { useColumnConfig } from './useColumnConfig';
 import { useHeaderSlot } from '@/components/ViewWrapper/HeaderSlotContext';
-import useWindowDimensions from '@/services/hooks/useWindowDimensions';
 import listClasses from './List.module.css';
 
 const PAGE_SIZES = [10, 20, 40, 500, 1000, 2000];
@@ -88,8 +87,6 @@ export const List = <RecordType extends FaraRecord>({
     setPage(prev => (prev !== 1 ? 1 : prev));
   }, [contextFilters]);
 
-  // height table without rows
-  const { height } = useWindowDimensions();
   const [selectedRecords, setSelectedRecords] = useState<RecordType[]>([]);
 
   // sort
@@ -112,7 +109,7 @@ export const List = <RecordType extends FaraRecord>({
   const defaultVisibleFields: string[] = [];
 
   Children.forEach(children, field => {
-    if (!isValidElement(field) || field.type !== Field) {
+    if (!isValidElement<Record<string, any>>(field) || field.type !== Field) {
       return;
     }
     const {
@@ -158,7 +155,7 @@ export const List = <RecordType extends FaraRecord>({
   const customRelationDisplay: Record<string, 'badge' | 'text'> = {};
   const customBadgeColor: Record<string, string> = {};
   Children.forEach(children, field => {
-    if (isValidElement(field) && field.type === Field) {
+    if (isValidElement<Record<string, any>>(field) && field.type === Field) {
       if (field.props.render && !field.props.virtual) {
         customRenders[field.props.name] = field.props.render;
       }
@@ -239,8 +236,113 @@ export const List = <RecordType extends FaraRecord>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refetch]);
 
-  // Dynamicly take column header
+  // ⚠️ ВАЖНО (mantine-datatable v9): массив `columns` нужно собрать ПОЛНОСТЬЮ
+  // ДО вызова useDataTableColumns. В v9 хук делает useMemo-снимок переданного
+  // массива в момент вызова (deps: [columns, order, toggle, pinning, width]).
+  // Раньше колонки пушились в пустой массив ПОСЛЕ вызова хука — на v8 это
+  // «дотекало» (effectiveColumns ссылался на тот же массив), а на v9 снимок
+  // остаётся пустым и таблица рисует только колонку-чекбокс выделения.
+  // Поэтому строим колонки здесь, затем зовём хук, и только потом ранний return.
   const columns: DataTableColumn[] = [];
+
+  if (data) {
+    // Метаданные по имени поля: приоритет — из ответа поиска (data.fields),
+    // добор — из полного списка полей модели (allFields), чтобы только что
+    // добавленная колонка появилась сразу, не дожидаясь рефетча.
+    const metaByName = new Map<string, GetListField>();
+    for (const f of data.fields) metaByName.set(f.name, f);
+    if (allFields) {
+      for (const f of allFields) {
+        if (!metaByName.has(f.name)) metaByName.set(f.name, f as GetListField);
+      }
+    }
+
+    // Колонки строим в порядке пользовательского выбора (selectedColumns —
+    // уже очищен от приватных/неизвестных полей).
+    for (const fieldName of selectedColumns) {
+      const field = metaByName.get(fieldName);
+      if (!field) continue; // метаданные ещё не подгрузились
+
+      const obj: DataTableColumn = {
+        // accessorKey: field.name.toLowerCase(),
+        accessor: field.name.toLowerCase(),
+        title: customLabels[field.name] || field.name,
+        sortable: true,
+        resizable: true,
+        sortKey: field.name.toLowerCase(),
+        render: row => {
+          const record = row[field.name] as RecordType;
+
+          // Используем кастомный render если он есть
+          if (customRenders[field.name]) {
+            return customRenders[field.name](record, row);
+          }
+
+          // Boolean поля — зелёная светящаяся точка
+          if (field.type === 'Boolean') {
+            return <BooleanCell value={row[field.name] as boolean} />;
+          }
+
+          if (!record) {
+            return null;
+          }
+          if (field.type === 'Many2many' || field.type === 'One2many') {
+            const count = Array.isArray(record) ? record.length : 0;
+            const display = customRelationDisplay[field.name] || 'badge';
+            if (display === 'text') {
+              return (
+                <Text size="sm" c="dimmed">
+                  {count} записей
+                </Text>
+              );
+            }
+            const color = customBadgeColor[field.name];
+            return (
+              <span
+                className={listClasses.recordsBadge}
+                style={
+                  color
+                    ? {
+                        backgroundColor: `var(--mantine-color-${color}-1)`,
+                        color: `var(--mantine-color-${color}-7)`,
+                      }
+                    : undefined
+                }>
+                {count} записей
+              </span>
+            );
+          }
+          if (field.type === 'Many2one') {
+            return (
+              <Text
+                span
+                onClick={event => {
+                  event.stopPropagation();
+                  navigate(`/${field.relation}/${record.id}`);
+                }}>
+                {`#${record.id}`}
+              </Text>
+            );
+          }
+          return <span>{`${record}`}</span>;
+        },
+      };
+      columns.push(obj);
+    }
+
+    // Добавляем виртуальные колонки
+    for (const vc of virtualColumns) {
+      columns.push({
+        accessor: vc.name,
+        title: vc.label || vc.name,
+        sortable: false,
+        resizable: true,
+        render: row => vc.render(null, row),
+      });
+    }
+  }
+
+  // Теперь массив колонок готов — снимок хука увидит их все.
   const { effectiveColumns } = useDataTableColumns<RecordType>({
     // key: props.model,
     key: undefined,
@@ -249,101 +351,6 @@ export const List = <RecordType extends FaraRecord>({
 
   if (!data) {
     return null;
-  }
-
-  // Метаданные по имени поля: приоритет — из ответа поиска (data.fields),
-  // добор — из полного списка полей модели (allFields), чтобы только что
-  // добавленная колонка появилась сразу, не дожидаясь рефетча.
-  const metaByName = new Map<string, GetListField>();
-  for (const f of data.fields) metaByName.set(f.name, f);
-  if (allFields) {
-    for (const f of allFields) {
-      if (!metaByName.has(f.name)) metaByName.set(f.name, f as GetListField);
-    }
-  }
-
-  // Колонки строим в порядке пользовательского выбора (selectedColumns —
-  // уже очищен от приватных/неизвестных полей).
-  for (const fieldName of selectedColumns) {
-    const field = metaByName.get(fieldName);
-    if (!field) continue; // метаданные ещё не подгрузились
-
-    const obj: DataTableColumn = {
-      // accessorKey: field.name.toLowerCase(),
-      accessor: field.name.toLowerCase(),
-      title: customLabels[field.name] || field.name,
-      sortable: true,
-      resizable: true,
-      sortKey: field.name.toLowerCase(),
-      render: row => {
-        const record = row[field.name] as RecordType;
-
-        // Используем кастомный render если он есть
-        if (customRenders[field.name]) {
-          return customRenders[field.name](record, row);
-        }
-
-        // Boolean поля — зелёная светящаяся точка
-        if (field.type === 'Boolean') {
-          return <BooleanCell value={row[field.name] as boolean} />;
-        }
-
-        if (!record) {
-          return null;
-        }
-        if (field.type === 'Many2many' || field.type === 'One2many') {
-          const count = Array.isArray(record) ? record.length : 0;
-          const display = customRelationDisplay[field.name] || 'badge';
-          if (display === 'text') {
-            return (
-              <Text size="sm" c="dimmed">
-                {count} записей
-              </Text>
-            );
-          }
-          const color = customBadgeColor[field.name];
-          return (
-            <span
-              className={listClasses.recordsBadge}
-              style={
-                color
-                  ? {
-                      backgroundColor: `var(--mantine-color-${color}-1)`,
-                      color: `var(--mantine-color-${color}-7)`,
-                    }
-                  : undefined
-              }>
-              {count} записей
-            </span>
-          );
-        }
-        if (field.type === 'Many2one') {
-          return (
-            <Text
-              span
-              onClick={event => {
-                event.stopPropagation();
-                navigate(`/${field.relation}/${record.id}`);
-              }}>
-              {`#${record.id}`}
-            </Text>
-          );
-        }
-        return <span>{`${record}`}</span>;
-      },
-    };
-    columns.push(obj);
-  }
-
-  // Добавляем виртуальные колонки
-  for (const vc of virtualColumns) {
-    columns.push({
-      accessor: vc.name,
-      title: vc.label || vc.name,
-      sortable: false,
-      resizable: true,
-      render: row => vc.render(null, row),
-    });
   }
 
   // Контрол настройки колонок. Живёт в шапке вида (портал в слот
@@ -391,11 +398,13 @@ export const List = <RecordType extends FaraRecord>({
         storeColumnsKey={props.model}
         selectedRecords={selectedRecords}
         onSelectedRecordsChange={setSelectedRecords}
-        onRowClick={({ record: { id } }) => navigate(`${id}`)}
+        onRowClick={({ record }: { record: RecordType }) =>
+          navigate(`${record.id}`)
+        }
         rowClassName={rowClassName as ((record: unknown) => string) | undefined}
         // pagination — показываем только если total > минимального pageSize,
         // иначе нет смысла (всё помещается на одну страницу).
-        {...(data?.total > PAGE_SIZES[1]
+        {...((data?.total > PAGE_SIZES[1]
           ? {
               totalRecords: data?.total,
               recordsPerPage: pageSize,
@@ -404,7 +413,7 @@ export const List = <RecordType extends FaraRecord>({
               recordsPerPageOptions: PAGE_SIZES,
               onRecordsPerPageChange: setPageSize,
             }
-          : {})}
+          : {}) as any)}
         // sort
         sortStatus={sortStatus}
         onSortStatusChange={setSortStatus}

@@ -1,7 +1,6 @@
 import { FieldChar } from '@/components/Form/Fields/FieldChar';
 import { FieldBoolean } from '@/components/Form/Fields/FieldBoolean';
 import { FieldJson } from '@/components/Form/Fields/FieldJson';
-import { FieldSelection } from '@/components/Form/Fields/FieldSelection';
 import { FormRow, FormSection } from '@/components/Form/Layout';
 import { useFormContext } from '@/components/Form/FormContext';
 import { registerExtension } from '@/shared/extensions';

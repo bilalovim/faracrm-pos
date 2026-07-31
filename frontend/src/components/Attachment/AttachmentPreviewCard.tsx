@@ -451,7 +451,7 @@ export function AttachmentPreviewCard({
           opened={previewOpen}
           onClose={() => setPreviewOpen(false)}
           src={imageSrc}
-          alt={name}
+          filename={name}
         />
       )}
 

@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react';
-import { Text, Group, Stack, ScrollArea, Tooltip, Box, SegmentedControl, ActionIcon, Button } from '@mantine/core';
+import { Text, Group, Stack, ScrollArea, Tooltip, SegmentedControl, Button } from '@mantine/core';
 import { IconPlus, IconCalendarEvent } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -262,7 +262,7 @@ export function Gantt<T extends FaraRecord>({
         : String(labelVal || `#${record.id}`);
 
       const bar: GanttBar = {
-        id: record.id,
+        id: Number(record.id),
         label,
         start,
         end,
@@ -271,13 +271,13 @@ export function Gantt<T extends FaraRecord>({
       };
 
       // Группируем по id записи
-      if (rowsMap.has(record.id)) {
-        const row = rowsMap.get(record.id)!;
+      if (rowsMap.has(Number(record.id))) {
+        const row = rowsMap.get(Number(record.id))!;
         row.bars.push(bar);
         row.totalDuration += end.getTime() - start.getTime();
       } else {
-        rowsMap.set(record.id, {
-          id: record.id,
+        rowsMap.set(Number(record.id), {
+          id: Number(record.id),
           label,
           bars: [bar],
           totalDuration: end.getTime() - start.getTime(),
@@ -403,7 +403,6 @@ export function Gantt<T extends FaraRecord>({
 
   // Вычисляем позицию и ширину бара
   const getBarStyle = useCallback((bar: GanttBar) => {
-    const { cellWidth, step } = getScaleConfig(scale);
     const totalDuration = maxTime.getTime() - minTime.getTime();
     const left = ((bar.start.getTime() - minTime.getTime()) / totalDuration) * totalWidth;
     const width = ((bar.end.getTime() - bar.start.getTime()) / totalDuration) * totalWidth;

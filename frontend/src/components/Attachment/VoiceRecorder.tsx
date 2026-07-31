@@ -52,7 +52,7 @@ export function VoiceRecorder({
   const { t } = useTranslation('chat');
   const [state, setState] = useState<RecordingState>('idle');
   const [duration, setDuration] = useState(0);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<{
     name: string;
@@ -64,7 +64,7 @@ export function VoiceRecorder({
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   // Cleanup

@@ -92,7 +92,6 @@ export function PrintButton({ model, recordId }: PrintButtonProps) {
   if (templates.length === 1) {
     const tmpl = templates[0];
     const format = tmpl.output_format || 'docx';
-    const FormatIcon = format === 'pdf' ? IconFileTypePdf : IconFileTypeDocx;
 
     return (
       <Button

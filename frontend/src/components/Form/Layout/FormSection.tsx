@@ -73,7 +73,7 @@ export function FormSection({
       )}
       
       {collapsible ? (
-        <Collapse in={opened}>
+        <Collapse expanded={opened}>
           {content}
         </Collapse>
       ) : (

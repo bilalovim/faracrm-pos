@@ -8,7 +8,7 @@ interface FormTabProps {
   label: string;
   icon?: ReactNode;
   badge?: number | string;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 /**
@@ -45,7 +45,7 @@ function TabContent({ name, children }: { name: string; children: ReactNode }) {
 }
 
 interface FormTabsProps {
-  children: ReactElement<FormTabProps>[];
+  children: ReactElement<FormTabProps> | ReactElement<FormTabProps>[];
   defaultTab?: string;
   variant?: 'default' | 'outline' | 'pills';
   orientation?: 'horizontal' | 'vertical';

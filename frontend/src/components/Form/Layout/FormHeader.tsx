@@ -40,7 +40,7 @@ export function FormHeader({
       radius="md">
       <Group
         align="flex-start"
-        gap={{ base: 'md', sm: 'lg' }}
+        gap={{ base: 'md', sm: 'lg' } as any}
         wrap="wrap"
         className={classes.headerGroup}>
         {avatar && <Box className={classes.headerAvatar}>{avatar}</Box>}
@@ -92,7 +92,7 @@ export function FormSheet({ children, avatar }: FormSheetProps) {
       <Box className={classes.sheetContainer}>
         <Group
           align="flex-start"
-          gap={{ base: 'md', sm: 'xl' }}
+          gap={{ base: 'md', sm: 'xl' } as any}
           wrap="wrap"
           className={classes.sheetGroup}>
           {avatar && <Box className={classes.sheetAvatar}>{avatar}</Box>}

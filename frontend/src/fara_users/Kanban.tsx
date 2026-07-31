@@ -135,7 +135,7 @@ function UserCard({ user, onClick }: UserCardProps) {
               color={
                 role.name?.toLowerCase().includes('admin')
                   ? 'violet'
-                  : getColorFromName(role.name)
+                  : getColorFromName(role.name || '')
               }>
               {role.name}
             </Badge>
@@ -181,7 +181,7 @@ export default function ViewKanbanUsers() {
         <UserCard
           key={user.id}
           user={user}
-          onClick={() => handleCardClick(user.id)}
+          onClick={() => handleCardClick(Number(user.id))}
         />
       ))}
     </div>

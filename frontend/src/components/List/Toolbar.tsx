@@ -28,7 +28,7 @@ export const Toolbar = <RecordType extends FaraRecord>({
   const [deleteStatus, setDeleteStatus] = useState<DeleteStatus>('idle');
   const [deletedCount, setDeletedCount] = useState(0);
   const undoRef = useRef<(() => void) | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleDeleteStart = () => {
     setDeleteStatus('loading');

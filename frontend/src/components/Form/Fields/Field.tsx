@@ -27,12 +27,21 @@ import {
 } from './FieldPatternBuilder';
 // import { FaraRecord } from '@/services/api/crudTypes';
 
-export const Field = ({ name, ...props }: { name: string }) => <></>;
+/** Пропсы поля формы/списка. Кроме name — произвольные пропсы, которые
+ *  читаются интроспекцией детей (Form/utils.tsx, List) и пробрасываются в
+ *  реальный компонент поля. */
+export interface FieldProps {
+  name: string;
+  [key: string]: any;
+}
 
-export const FieldComponents: Record<
-  string,
-  React.FC<{ name: string; model: string; children?: React.ReactNode }>
-> = {
+// Компонент-маркер: реально не рендерится (Form подменяет его настоящим
+// компонентом поля по метаданным), поэтому возвращает null.
+export const Field = (_props: FieldProps) => null;
+
+// Компоненты полей диспетчеризуются динамически по типу; пропсы у них
+// разнородные — поэтому FC<any> (иначе не собрать карту разнотипных полей).
+export const FieldComponents: Record<string, React.FC<any>> = {
   FieldInteger,
   FieldChar,
   FieldTranslatedChar,

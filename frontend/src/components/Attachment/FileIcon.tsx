@@ -1,4 +1,4 @@
-import { Box, ThemeIcon } from '@mantine/core';
+import { ThemeIcon } from '@mantine/core';
 import { getFileIconConfig } from './fileIcons';
 
 interface FileIconProps {

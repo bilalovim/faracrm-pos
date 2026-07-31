@@ -1,4 +1,4 @@
-import { Alert, Code } from '@mantine/core';
+import { Alert, Code, Text } from '@mantine/core';
 import {
   IconFile,
   IconDatabase,
@@ -12,7 +12,7 @@ import {
 import { Form } from '@/components/Form/Form';
 import { Field } from '@/components/List/Field';
 import { ViewFormProps } from '@/route/type';
-import { Attachment } from '@/services/api/attachments';
+import { Attachment, SchemaAttachmentStorage } from '@/services/api/attachments';
 import {
   FormRow,
   FormTabs,

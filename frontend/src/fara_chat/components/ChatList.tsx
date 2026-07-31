@@ -212,7 +212,9 @@ export function ChatList({
     showForeignChats,
   ]);
 
-  const { data, isLoading, error, refetch } = useGetChatsQuery(queryArgs);
+  const { data, isLoading, error, refetch } = useGetChatsQuery(
+    queryArgs as any,
+  );
   const [pinChat] = usePinChatMutation();
 
   // Закрепить/открепить чат. stopPropagation в обработчиках меню не даёт

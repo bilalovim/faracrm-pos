@@ -112,7 +112,9 @@ function UserMenu() {
   const languages = apiLanguages.length > 0 ? apiLanguages : FALLBACK_LANGUAGES;
 
   // Находим язык пользователя по id из БД
-  const userLang = languages.find(lang => lang.id === userLangId);
+  const userLang = (languages as Language[]).find(
+    lang => lang.id === userLangId,
+  );
 
   const currentLang =
     userLang ||

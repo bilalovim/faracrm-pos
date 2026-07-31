@@ -96,14 +96,12 @@ function formatContactDisplay(contact: Contact): string {
  * Типы контактов загружаются из API (таблица contact_type).
  */
 export function ContactsWidget({
-  name,
   value = [],
   onChange,
   allowedTypes,
   maxContacts,
   disabled = false,
   hidePrimary = false,
-  loading = false,
   showTypeButton = false,
   canOpenChat = false,
   onOpenChat,

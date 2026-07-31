@@ -21,7 +21,7 @@ export function GenericForm({ model, fields }: GenericFormProps) {
 
   return (
     <Form<FaraRecord> model={model}>
-      <FormSection title={title} Icon={IconForms}>
+      <FormSection title={title} icon={<IconForms />}>
         {displayFields.map(name => (
           <Field key={name} name={name} />
         ))}

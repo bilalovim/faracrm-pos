@@ -8,7 +8,9 @@ import {
   isMenuSimple,
 } from '@config/menuData';
 
-export const scrollToLink = (linkRef: React.RefObject<HTMLButtonElement>) => {
+export const scrollToLink = (
+  linkRef: React.RefObject<HTMLButtonElement | null>,
+) => {
   const element = linkRef.current;
 
   if (!element) {

@@ -34,7 +34,6 @@ export function ChatHeader({
   chat,
   isOnline,
   typingUsers = [],
-  onAddMember,
   onSettings,
   onSearch,
   onPinnedMessages,

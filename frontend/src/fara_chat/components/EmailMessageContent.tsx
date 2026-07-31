@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { Box, Text, Spoiler, Anchor, ActionIcon, Tooltip } from '@mantine/core';
-import DOMPurify from 'dompurify';
+import { Box, Text, Spoiler } from '@mantine/core';
+import DOMPurify, { type Config } from 'dompurify';
 import styles from './EmailMessageContent.module.css';
 
 interface EmailMessageContentProps {
@@ -45,7 +45,7 @@ export function EmailMessageContent({
   // Санитизация HTML
   const sanitizedHtml = useMemo(() => {
     // Настраиваем DOMPurify
-    const config: DOMPurify.Config = {
+    const config: Config = {
       ALLOWED_TAGS: [
         'p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'img',
         'div', 'span', 'blockquote', 'pre', 'code',
@@ -67,7 +67,7 @@ export function EmailMessageContent({
 
     // После санитизации модифицируем ссылки
     const div = document.createElement('div');
-    div.innerHTML = clean;
+    div.innerHTML = clean as unknown as string;
 
     // Все ссылки открываем в новой вкладке и добавляем rel="noopener noreferrer"
     const links = div.querySelectorAll('a');

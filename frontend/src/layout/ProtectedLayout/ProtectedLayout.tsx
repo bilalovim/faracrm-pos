@@ -89,7 +89,7 @@ export default function CollapseSideBar() {
               <Group
                 h="100%"
                 px={{ base: 'xs', sm: 'md' }}
-                gap={{ base: 4, sm: 'sm' }}
+                gap={{ base: 4, sm: 'sm' } as any}
                 style={{ flexShrink: 0 }}>
                 {/* Мобильная кнопка бургер */}
                 <Group hiddenFrom="sm">
@@ -118,7 +118,7 @@ export default function CollapseSideBar() {
               <Group
                 h="100%"
                 px={{ base: 'xs', sm: 'md' }}
-                gap={{ base: 4, sm: 'sm' }}
+                gap={{ base: 4, sm: 'sm' } as any}
                 wrap="nowrap"
                 style={{ flexShrink: 0 }}>
                 {/* ThemeToggle — только tablet+ */}

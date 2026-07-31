@@ -45,7 +45,7 @@ export function Actions({
       ids: idsToDelete,
     })
       .unwrap()
-      .catch(error => {
+      .catch(() => {
         onDeleteError?.();
       });
   };

@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import { Card, Text, Badge, Group, Stack, ScrollArea, ActionIcon, Box } from '@mantine/core';
-import { IconGripVertical, IconPlus } from '@tabler/icons-react';
+import { IconGripVertical } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useSearchQuery, useUpdateMutation } from '@/services/api/crudApi';
 import {
@@ -43,7 +43,7 @@ interface KanbanCardProps {
 }
 
 // Карточка канбана (перетаскиваемая)
-function SortableKanbanCard({ record, model, fields, onClick }: KanbanCardProps) {
+function SortableKanbanCard({ record, fields, onClick }: KanbanCardProps) {
   const {
     attributes,
     listeners,
@@ -191,7 +191,7 @@ function KanbanColumn({ stage, records, model, fields, onCardClick }: KanbanColu
                   record={record}
                   model={model}
                   fields={fields}
-                  onClick={() => onCardClick(record.id)}
+                  onClick={() => onCardClick(Number(record.id))}
                 />
               ))}
             </Stack>
@@ -344,7 +344,7 @@ export function Kanban<T extends FaraRecord>({
 
     // Инициализация всех колонок
     stages.forEach(stage => {
-      recordsByStage.set(stage.id, []);
+      recordsByStage.set(Number(stage.id), []);
     });
 
     // Без стадии
@@ -376,7 +376,7 @@ export function Kanban<T extends FaraRecord>({
               <KanbanColumn
                 key={stage.id}
                 stage={stage}
-                records={recordsByStage.get(stage.id) || []}
+                records={recordsByStage.get(Number(stage.id)) || []}
                 model={model}
                 fields={fields}
                 onCardClick={handleCardClick}
@@ -403,7 +403,7 @@ export function Kanban<T extends FaraRecord>({
           key={record.id}
           record={record}
           fields={fields}
-          onClick={() => handleCardClick(record.id)}
+          onClick={() => handleCardClick(Number(record.id))}
         />
       ))}
     </div>

@@ -54,7 +54,7 @@ const rootReducer = (
 // }
 
 export const store = configureStore({
-  devTools: process.env.NODE_ENV === 'development',
+  devTools: import.meta.env.DEV,
   middleware: getDefaultMiddleware =>
     getDefaultMiddleware({
       // serializableCheck: {

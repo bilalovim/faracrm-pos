@@ -37,14 +37,6 @@ export interface FieldProps<T extends FaraRecord = FaraRecord> {
   [key: string]: any;
 }
 
-export const Field = <T extends FaraRecord = FaraRecord>({
-  name,
-  label,
-  labelPosition,
-  children,
-  render,
-  hidden,
-  fields,
-  virtual,
-  ...props
-}: FieldProps<T>) => <></>;
+export const Field = <T extends FaraRecord = FaraRecord>(
+  _props: FieldProps<T>,
+) => <></>;

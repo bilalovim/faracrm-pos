@@ -1,0 +1,23 @@
+{
+  "title": "Documentation",
+  "open": "Section documentation",
+  "searchPlaceholder": "Search the docs…",
+  "searchEmpty": "Nothing found",
+  "allTopics": "All topics",
+  "noArticleHint": "There is no dedicated article for this section yet — showing the general documentation.",
+  "tabText": "Text",
+  "tabVideo": "Video",
+  "videoEmpty": "Video for this section is coming soon.",
+  "videoSoon": "Soon",
+  "videoWatch": "Watch",
+  "groups": {
+    "start": "Getting started",
+    "communication": "Communication",
+    "crm": "CRM",
+    "sales": "Sales",
+    "stock": "Stock",
+    "projects": "Projects",
+    "files": "Files",
+    "settings": "Settings"
+  }
+}

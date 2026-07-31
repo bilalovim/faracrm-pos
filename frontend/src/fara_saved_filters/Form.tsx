@@ -10,7 +10,6 @@ import {
   FormSheet,
 } from '@/components/Form/Layout';
 import { IconFilter, IconSettings } from '@tabler/icons-react';
-import { Code, Text, Paper } from '@mantine/core';
 
 export function ViewFormSavedFilters(props: ViewFormProps) {
   const { t } = useTranslation('saved_filters');

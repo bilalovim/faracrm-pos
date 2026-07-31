@@ -3,7 +3,6 @@ import { Box, Text, Group, Stack, useMantineTheme } from '@mantine/core';
 import { IconUpload, IconFile } from '@tabler/icons-react';
 import { useParams } from 'react-router-dom';
 import { useFormContext } from '../FormContext';
-import { FaraRecord } from '@/services/api/crudTypes';
 import {
   AttachmentPreview,
   isImageMimetype,
@@ -21,13 +20,12 @@ interface FieldPolymorphicMany2oneProps {
   maxSize?: number; // в байтах
 }
 
-export const FieldPolymorphicMany2one = <RecordType extends FaraRecord>({
+export const FieldPolymorphicMany2one = ({
   name,
   model,
   label,
   accept,
   maxSize = 10 * 1024 * 1024, // 10MB по умолчанию
-  ...props
 }: FieldPolymorphicMany2oneProps) => {
   const form = useFormContext();
   const { t } = useTranslation('common');

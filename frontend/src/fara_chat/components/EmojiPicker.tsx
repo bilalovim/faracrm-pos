@@ -1,4 +1,4 @@
-import { Box, SimpleGrid, Text, Tabs, ScrollArea } from '@mantine/core';
+import { Box, SimpleGrid, Tabs, ScrollArea } from '@mantine/core';
 import styles from './EmojiPicker.module.css';
 
 interface EmojiPickerProps {

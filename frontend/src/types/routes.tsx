@@ -1,4 +1,4 @@
-import type {LazyExoticComponent} from 'react'
+import type { LazyExoticComponent, JSX } from 'react'
 
 export type Route = {
   key: string

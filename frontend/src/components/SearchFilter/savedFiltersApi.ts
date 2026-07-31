@@ -62,7 +62,7 @@ const savedFiltersApi = crudApi.injectEndpoints({
       }),
       transformResponse: (response: { data: SavedFilterDTO[] }) =>
         response.data,
-      providesTags: (result, error, modelName) => [
+      providesTags: (_result, _error, modelName) => [
         { type: 'SavedFilters', id: modelName ?? 'ALL' },
         { type: 'SavedFilters', id: 'LIST' },
       ],
@@ -75,7 +75,7 @@ const savedFiltersApi = crudApi.injectEndpoints({
         method: 'POST',
         body: data,
       }),
-      invalidatesTags: (result, error, data) => [
+      invalidatesTags: (_result, _error, data) => [
         { type: 'SavedFilters', id: data.model_name },
         { type: 'SavedFilters', id: 'LIST' },
       ],

@@ -50,7 +50,7 @@ export function ImageGalleryModal({
   const [rotation, setRotation] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
 
   // Фильтруем только изображения для навигации

@@ -100,7 +100,7 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
 
   const fieldsList =
     Children.map(children, field => {
-      if (!isValidElement(field) || field.type !== Field) {
+      if (!isValidElement<Record<string, any>>(field) || field.type !== Field) {
         return [];
       }
       return field.props.name;
@@ -110,7 +110,7 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
   // для заголовков колонок (как в List)
   const customLabels: Record<string, string> = {};
   Children.forEach(children, field => {
-    if (isValidElement(field) && field.type === Field && field.props.label) {
+    if (isValidElement<Record<string, any>>(field) && field.type === Field && field.props.label) {
       customLabels[field.props.name] = field.props.label;
     }
   });
@@ -178,7 +178,7 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
     const newRecords = selectedItems.map(item => ({
       ...item,
       _color: 'new' as const,
-    })) as RecordType[];
+    })) as unknown as RecordType[];
 
     setRecords(prev => [...prev, ...newRecords]);
   };
@@ -259,20 +259,16 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
     }
   }, [form]);
 
-  // Columns
-  const columns: DataTableColumn[] = [];
-  const { effectiveColumns } = useDataTableColumns<RecordType>({
-    key: undefined,
-    columns,
-  });
+  // Columns — ВАЖНО: массив собирается ПОЛНОСТЬЮ ниже, ДО вызова
+  // useDataTableColumns. mantine-datatable v9: хук снимает useMemo-снимок
+  // columns в момент вызова, поздний push в него не виден (таблица покажет
+  // только колонку-чекбокс). Поэтому хук перенесён ПОСЛЕ сборки колонок.
+  const columns: DataTableColumn<RecordType>[] = [];
 
-  if (!actualData || !defaulValues) return null;
-  if (!Object.keys(actualData).length && !Object.keys(defaulValues).length)
-    return null;
-
-  // Build columns from fields
-  for (const field of actualData.fields || []) {
-    const obj: DataTableColumn = {
+  // Build columns from fields (actualData может быть ещё не загружен —
+  // тогда массив полей пустой; ранний выход ниже, после вызова хука).
+  for (const field of actualData?.fields || []) {
+    const obj: DataTableColumn<RecordType> = {
       accessor: field.name.toLowerCase(),
       title: customLabels[field.name] || field.name,
       sortable: !inline_update,
@@ -341,7 +337,7 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
     title: '',
     width: 50,
     sortable: false,
-    render: record => (
+    render: (record: any) => (
       <Group
         gap={4}
         justify="center"
@@ -392,6 +388,16 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
     ),
   });
 
+  // Массив колонок готов — теперь зовём хук (снимок увидит все колонки).
+  const { effectiveColumns } = useDataTableColumns<RecordType>({
+    key: undefined,
+    columns,
+  });
+
+  if (!actualData || !defaulValues) return null;
+  if (!Object.keys(actualData).length && !Object.keys(defaulValues).length)
+    return null;
+
   // allRecords уже определен выше
   const totalRecords = actualData?.total || allRecords.length;
   const isEmpty = allRecords.length === 0;
@@ -425,7 +431,7 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
               onSelect={handleSelectRecords}
               relatedFieldO2M={fieldsServer[name]?.relatedField}
               parentId={Number(id)}
-              extraFilters={filter}
+              extraFilters={filter as any}
               displayField={displayField}
               buttonProps={{
                 size: 'xs',
@@ -477,7 +483,7 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
             storeColumnsKey={`${id}_${relatedModel || name}`}
             selectedRecords={selectedRecords}
             onSelectedRecordsChange={setSelectedRecords}
-            onRowClick={({ record: { id: recordId } }) => {
+            onRowClick={({ record: { id: recordId } }: { record: RecordType }) => {
               if (
                 recordId &&
                 !recordId.toString().startsWith('virtual') &&
@@ -494,7 +500,7 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
             // recordsPerPageOptions={PAGE_SIZES}
             // onRecordsPerPageChange={setPageSize}
 
-            {...(totalRecords > PAGE_SIZES[0]
+            {...((totalRecords > PAGE_SIZES[0]
               ? {
                   totalRecords,
                   recordsPerPage: pageSize,
@@ -503,10 +509,16 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
                   recordsPerPageOptions: PAGE_SIZES,
                   onRecordsPerPageChange: setPageSize,
                 }
-              : {})}
-            paginationText={({ from, to, totalRecords }) =>
-              `${from}–${to} из ${totalRecords}`
-            }
+              : {}) as any)}
+            paginationText={({
+              from,
+              to,
+              totalRecords,
+            }: {
+              from: number;
+              to: number;
+              totalRecords: number;
+            }) => `${from}–${to} из ${totalRecords}`}
             // Sort
             sortStatus={sortStatus}
             onSortStatusChange={setSortStatus}

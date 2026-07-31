@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   ActionIcon,
   Indicator,
   Tooltip,
   Popover,
-  Stack,
   Text,
   Group,
   Badge,
@@ -23,7 +22,6 @@ import {
   useGetChatMessagesQuery,
   useMarkChatAsReadMutation,
 } from '@/services/api/chat';
-import { useChatWebSocketContext } from '@/fara_chat/context';
 import { useSelector } from 'react-redux';
 import type { RootState } from '@/store/store';
 
@@ -38,7 +36,7 @@ export function ActivityNotification() {
 
   const session = useSelector((state: RootState) => state.auth.session);
   const token = session?.token || '';
-  const userId = session?.uid;
+  const userId = session?.user_id?.id;
 
   // Получаем список чатов — ищем системный
   const { data: chatsData } = useGetChatsQuery(

@@ -5,7 +5,6 @@ import {
   Text,
   Stack,
   Box,
-  Group,
 } from '@mantine/core';
 import { IconMenu2 } from '@tabler/icons-react';
 import { useNavigate, useLocation } from 'react-router-dom';

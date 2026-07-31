@@ -9,7 +9,6 @@ import {
   EditParams,
   EditResult,
   FaraRecord,
-  GetAttachmentParams,
   GetListM2mParams,
   GetListParams,
   GetListResult,
@@ -31,7 +30,16 @@ export const crudApi = createApi({
   keepUnusedDataFor: 30,
   // global configuration for the api
   // refetchOnReconnect: true,
-  tagTypes: ['Fields', 'SavedFilters', 'ColumnSettings', 'Chat', 'ChatMessage'],
+  // Универсальный CRUD-API работает по ЛЮБОЙ модели → теги динамические
+  // ({ type: <имя модели> }). Поэтому набор тегов открытый (string), а не
+  // замкнутый union — иначе RTK 2.12 ругается на { type: arg.model }.
+  tagTypes: [
+    'Fields',
+    'SavedFilters',
+    'ColumnSettings',
+    'Chat',
+    'ChatMessage',
+  ] as string[],
   endpoints: build => ({
     search: build.query<GetListResult<FaraRecord>, GetListParams>({
       query: queryArg => ({
@@ -48,17 +56,13 @@ export const crudApi = createApi({
           raw: queryArg.raw,
         },
       }),
-      providesTags: (result, error, arg) => {
-        // return result
-        return result
+      providesTags: (result, _error, arg) =>
+        result
           ? [
               { type: arg.model, id: 'LIST' },
-              ...result?.data.map(
-                ({ id }) => ({ type: arg.model, id }) as FaraRecord,
-              ),
+              ...result.data.map(({ id }) => ({ type: arg.model, id })),
             ]
-          : [{ type: arg.model, id: 'LIST' } as FaraRecord];
-      },
+          : [{ type: arg.model, id: 'LIST' }],
 
       // forceRefetch: () => true,
       // serializeQueryArgs: ({ endpointName, queryArgs }) =>
@@ -71,7 +75,7 @@ export const crudApi = createApi({
         url: `${AUTO}/${queryArg.model}/search_many2many`,
         params: queryArg,
       }),
-      providesTags: (result, error, arg) => [
+      providesTags: (_result, _error, arg) => [
         { type: arg.model, id: `M2M_${arg.id}_${arg.name}` },
       ],
     }),
@@ -164,7 +168,7 @@ export const crudApi = createApi({
           fields: queryArg.fields,
         },
       }),
-      providesTags: (result, error, arg) =>
+      providesTags: (_result, _error, arg) =>
         // result ? [{ type: arg.model, id: arg.id }, arg.model] : [arg.model],
         [{ type: arg.model, id: arg.id }],
     }),
@@ -180,7 +184,7 @@ export const crudApi = createApi({
           fields: queryArg.fields,
         },
       }),
-      providesTags: (result, error, arg) => [arg.model],
+      providesTags: (_result, _error, arg) => [arg.model],
     }),
 
     updateBulk: build.mutation<UpdateBulkResult, UpdateBulkParams>({
@@ -191,9 +195,9 @@ export const crudApi = createApi({
       }),
       // После массового апдейта перечитываем список и каждую затронутую
       // запись (открытая форма / кеш read).
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: arg.model, id: 'LIST' },
-        ...arg.ids.map(id => ({ type: arg.model, id }) as FaraRecord),
+        ...arg.ids.map(id => ({ type: arg.model, id })),
       ],
     }),
 
@@ -279,7 +283,7 @@ export const crudApi = createApi({
         method: 'POST',
         body: queryArg.values,
       }),
-      invalidatesTags: (result, error, arg) =>
+      invalidatesTags: (_result, _error, arg) =>
         // result ? [{ type: arg.model, id: result.id }, arg.model] : [arg.model],
         [{ type: arg.model, id: 'LIST' }],
     }),
@@ -365,7 +369,7 @@ export const crudApi = createApi({
     }),
 
     executeOnchange: build.mutation<
-      { values: Record<string, any> },
+      { values: Record<string, any>; fields?: Record<string, any> },
       { model: string; trigger_field: string; values: Record<string, any> }
     >({
       query: ({ model, trigger_field, values }) => ({
@@ -381,7 +385,7 @@ export const crudApi = createApi({
         url: `${AUTO}/${model}/fields`,
         method: 'GET',
       }),
-      providesTags: (result, error, model) => [{ type: 'Fields', id: model }],
+      providesTags: (_result, _error, model) => [{ type: 'Fields', id: model }],
     }),
 
     // Поля модели по её env-имени (значение models.name) — для конструктора
@@ -393,7 +397,7 @@ export const crudApi = createApi({
         url: `/attachments/model_fields/${modelName}`,
         method: 'GET',
       }),
-      providesTags: (result, error, modelName) => [
+      providesTags: (_result, _error, modelName) => [
         { type: 'Fields', id: `route-model:${modelName}` },
       ],
     }),

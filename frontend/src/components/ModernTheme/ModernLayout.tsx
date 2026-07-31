@@ -16,6 +16,7 @@ import ThemeToggle from '@/components/ThemeToggle';
 import FaraRouters from '@/route/Routers';
 import Logo from '@/components/Logo';
 import UserMenu from '@/components/UserMenu';
+import { DocsButton } from '@/components/Docs';
 import { ChatNotification } from '@/components/ChatNotification';
 import { ActivityNotification } from '@/fara_activity/ActivityNotification';
 import { ChatWebSocketProvider } from '@/fara_chat/context';
@@ -29,7 +30,7 @@ import { ChatSidebar } from './ChatSidebar';
 import classes from './ModernLayout.module.css';
 import { useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
-import { MenuGroup } from '@config/menuGroups';
+import type { MenuGroup } from '@config/menuData';
 import { getVisibleMenuItems } from '@config/menuData';
 
 export function ModernLayout() {
@@ -171,7 +172,7 @@ export function ModernLayout() {
             <Group
               h="100%"
               px={{ base: 'xs', sm: 'md' }}
-              gap={{ base: 4, sm: 'sm' }}
+              gap={{ base: 4, sm: 'sm' } as any}
               style={{ flexShrink: 0 }}>
               {/* Кнопка подменю активной группы — только мобила
                   (на десктопе подменю показывается в HorizontalMenu) */}
@@ -185,6 +186,9 @@ export function ModernLayout() {
                 <ActivityNotification />
               </Box>
               <ChatNotification />
+              {/* Контекстная документация: книга открывает справку по текущему
+                  разделу (по имени модели/маршруту) + общее оглавление */}
+              <DocsButton />
               <UserMenu />
             </Group>
           </Flex>

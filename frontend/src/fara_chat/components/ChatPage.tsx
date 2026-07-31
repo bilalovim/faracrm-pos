@@ -33,6 +33,7 @@ import { NewChatModal } from './NewChatModal';
 import { ChatSettingsModal } from './ChatSettingsModal';
 import styles from './ChatPage.module.css';
 import { useDispatch } from 'react-redux';
+import type { AppDispatch } from '@/store/store';
 
 interface ChatPageProps {
   token: string;
@@ -41,12 +42,11 @@ interface ChatPageProps {
 }
 
 export function ChatPage({
-  token,
   currentUserId,
   currentUserName,
 }: ChatPageProps) {
   const { t } = useTranslation('chat');
-  const dispatch = useDispatch();
+  const dispatch = useDispatch<AppDispatch>();
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   // Soft-delete: видимость удалённых сообщений в открытом чате.
   // Сбрасывается при переключении чата (см. useEffect ниже).
@@ -141,7 +141,7 @@ export function ChatPage({
     const args: {
       limit: number;
       is_internal?: boolean;
-      chat_type?: string;
+      chat_type?: 'direct' | 'group';
       connector_type?: string;
       folder_id?: number;
       scope?: 'mine' | 'all';
@@ -149,7 +149,7 @@ export function ChatPage({
     if (chatFilter.is_internal !== undefined)
       args.is_internal = chatFilter.is_internal;
     if (chatFilter.chat_type !== undefined)
-      args.chat_type = chatFilter.chat_type;
+      args.chat_type = chatFilter.chat_type as 'direct' | 'group';
     if (chatFilter.connector_type !== undefined)
       args.connector_type = chatFilter.connector_type;
     if (chatFilter.folder_id !== undefined)
@@ -354,9 +354,7 @@ export function ChatPage({
   const {
     isConnected,
     subscribe,
-    unsubscribe,
     sendTyping,
-    sendRead,
     addMessageListener,
     isUserOnline,
   } = useChatWebSocketContext();

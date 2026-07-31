@@ -28,7 +28,7 @@ export function ButtonModalCreate({
   // const dispatch = useDispatch();
   const [opened, { open, close }] = useDisclosure(false);
   const views = useMemo(() => getModelViews(model), [model]);
-  const Form = customForm || views?.form;
+  const Form: any = customForm || views?.form;
 
   // После создания записи - инвалидируем кэш чтобы обновить список O2M
   // const handleCreated = useCallback(

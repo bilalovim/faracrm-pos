@@ -3,7 +3,6 @@ import { FormFieldsContext, useFormContext } from './FormContext';
 import { useUpdateMutation, crudApi } from '@/services/api/crudApi';
 import { useDispatch } from 'react-redux';
 import { FaraRecord, Identifier } from '@/services/api/crudTypes';
-import { Field } from '@/types/fields';
 import { useContext, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { prepareValuesToSave } from './utils';
@@ -52,8 +51,6 @@ export function ButtonUpdate({
   model,
   id,
   // fields,
-  parentId,
-  relatedFieldO2M,
   onSaveSuccess,
 }: {
   model: string;

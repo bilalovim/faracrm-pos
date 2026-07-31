@@ -6,7 +6,6 @@ import {
   Stack,
   Group,
   SegmentedControl,
-  Text,
 } from '@mantine/core';
 import { IconUsers, IconUser } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';

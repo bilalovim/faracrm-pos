@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { UseFormReturnType } from '@mantine/form';
 import {
   useGetOnchangeFieldsQuery,
@@ -29,7 +30,7 @@ import { FaraRecord, GetFormField } from '@/services/api/crudTypes';
 export const useOnchange = (
   model: string,
   form: UseFormReturnType<FaraRecord>,
-  setFields?: (fields: Record<string, GetFormField>) => void,
+  setFields?: Dispatch<SetStateAction<Record<string, GetFormField>>>,
 ) => {
   // Получаем список полей с onchange обработчиками
   const { data: onchangeData } = useGetOnchangeFieldsQuery(

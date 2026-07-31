@@ -1,7 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { Session } from '@services/auth/types';
 import { RootState } from '@store/store';
-import { API_BASE_URL } from '@services/baseQueryWithReauth';
 
 type AuthState = {
   session?: Session;
@@ -72,7 +71,7 @@ const slice = createSlice({
       state.session = session;
     },
 
-    logOut: state => {
+    logOut: () => {
       // Деактивируем сессию на сервере (fire-and-forget)
       // serverLogout(state.session?.token);
       // localStorage.setItem('session', '');

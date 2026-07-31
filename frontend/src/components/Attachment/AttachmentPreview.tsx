@@ -72,11 +72,11 @@ export function AttachmentPreview({
   // Превью (маленькая картинка в карточке)
   const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(null);
   const [thumbnailError, setThumbnailError] = useState(false);
-  const [isLoadingThumbnail, setIsLoadingThumbnail] = useState(false);
+  const [isLoadingThumbnail] = useState(false);
 
   // Оригинал (для модального окна)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null);
-  const [isLoadingOriginal, setIsLoadingOriginal] = useState(false);
+  const [isLoadingOriginal] = useState(false);
 
   const [imageModalOpened, setImageModalOpened] = useState(false);
 

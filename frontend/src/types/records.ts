@@ -451,6 +451,11 @@ export interface ContractRecord extends BaseRecord {
   active: boolean;
   partner_id: RelationRecord | null;
   company_id: RelationRecord | null;
+  type: string | null;
+  date_start: string | null;
+  date_end: string | null;
+  signed: boolean;
+  stamp: boolean;
 }
 
 // ============================================================
@@ -467,6 +472,7 @@ export interface LanguageRecord extends BaseRecord {
 export interface CronJobRecord extends BaseRecord {
   name: string;
   active: boolean;
+  priority: number;
 }
 
 export interface SavedFilterRecord extends BaseRecord {

@@ -8,7 +8,7 @@ import {
   FormTab,
   FormSheet,
 } from '@/components/Form/Layout';
-import { IconBell, IconAlignBoxLeftTop } from '@tabler/icons-react';
+import { IconAlignBoxLeftTop } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 import { ActivityRecord, ActivityTypeRecord } from './List';
 

@@ -102,13 +102,13 @@ export function ChatInput({
   const [emojiOpened, setEmojiOpened] = useState(false);
   const [galleryOpened, setGalleryOpened] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
+  const [, setIsRecording] = useState(false);
 
   const [sendMessage] = useSendMessageMutation();
   const inputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<() => void>(null);
   const fileInputRef = useRef<() => void>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Голосовое сообщение готово к отправке
   const [pendingVoice, setPendingVoice] = useState<{

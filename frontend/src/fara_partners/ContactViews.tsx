@@ -2,6 +2,7 @@ import { Form } from '@/components/Form/Form';
 import { List } from '@/components/List/List';
 import { Field } from '@/components/List/Field';
 import { ViewFormProps } from '@/route/type';
+import type { ContactRecord } from '@/types/records';
 import { FormRow } from '@/components/Form/Layout';
 import { Badge } from '@mantine/core';
 import {

@@ -40,9 +40,7 @@ export function ConnectorList() {
   const { t } = useTranslation('chat');
 
   return (
-    <List
-      model="chat_connector"
-      defaultFields={['name', 'type', 'category', 'active', 'webhook_state']}>
+    <List model="chat_connector">
       <Field name="id" label="ID" />
       <Field name="name" label={t('connector.fields.name')} />
       <Field

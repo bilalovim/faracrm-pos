@@ -12,7 +12,7 @@ import {
   Menu,
 } from '@mantine/core';
 import * as yup from 'yup';
-import { useForm, yupResolver } from '@mantine/form';
+import { useForm } from '@mantine/form';
 import { useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +43,25 @@ import {
 import { storeSession } from '@/slices/authSlice';
 import Logo from '@/components/Logo';
 import AnimatedBackground from './AnimatedBackground';
+
+// yupResolver вынесен из @mantine/form в Mantine 9 (отдельный пакет
+// mantine-form-yup-resolver). Чтобы не тянуть доп. зависимость — локальный шим.
+function yupResolver(schema: any) {
+  return (values: Record<string, any>): Record<string, string> => {
+    try {
+      schema.validateSync(values, { abortEarly: false });
+      return {};
+    } catch (err: any) {
+      const results: Record<string, string> = {};
+      if (err?.inner) {
+        for (const e of err.inner) {
+          if (e.path && !(e.path in results)) results[e.path] = e.message;
+        }
+      }
+      return results;
+    }
+  };
+}
 
 // RuTube icon
 const IconRuTube = ({ size = 20 }: { size?: number }) => (

@@ -1,8 +1,6 @@
 import { ActionIcon, Tooltip } from '@mantine/core';
 import {
   IconLayoutSidebarLeftCollapse,
-  IconLayoutSidebarLeftExpand,
-  IconLayoutSidebarInactive,
   IconMenu2,
   IconX,
 } from '@tabler/icons-react';

@@ -52,6 +52,7 @@ import {
 import type { GalleryItem } from '@/components/Attachment';
 import { downloadAttachment } from '@/utils/attachmentUrls';
 import { useDispatch } from 'react-redux';
+import type { AppDispatch } from '@/store/store';
 import styles from './ChatMessages.module.css';
 import {
   EmailMessageContent,
@@ -124,7 +125,7 @@ export function ChatMessages({
     }
   };
 
-  const dispatch = useDispatch();
+  const dispatch = useDispatch<AppDispatch>();
   const viewportRef = useRef<HTMLDivElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -638,7 +639,7 @@ export function ChatMessages({
                             connectorType={message.connector_type}
                           />
                         ) : isEmailMessage(message) ? (
-                          <EmailMessageContent body={message.body} />
+                          <EmailMessageContent body={message.body || ''} />
                         ) : (
                           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                             {message.body}

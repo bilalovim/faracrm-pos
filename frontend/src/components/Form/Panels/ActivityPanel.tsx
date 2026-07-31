@@ -183,7 +183,7 @@ function ActivityItem({
         <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
           <Group gap="xs" wrap="nowrap">
             <Badge size="xs" color={stateColor} variant="light">
-              {t(`state.${activity.state}`, activity.state)}
+              {t(`state.${activity.state}`, activity.state) as string}
             </Badge>
             {typeName && (
               <Text size="xs" c="dimmed" truncate>
@@ -372,7 +372,7 @@ function CreateActivityForm({
         <DateTimePicker
           size="xs"
           value={dateDeadline}
-          onChange={setDateDeadline}
+          onChange={v => setDateDeadline(v ? new Date(v) : null)}
           label={t('activity:fields.date_deadline')}
           valueFormat="YYYY-MM-DD HH:mm"
         />

@@ -33,7 +33,7 @@ export const getChildrenFlat = (children: React.ReactNode): fieldsFlat => {
 
   const processChildren = (nodes: React.ReactNode) => {
     Children.forEach(nodes, child => {
-      if (!isValidElement(child)) return;
+      if (!isValidElement<Record<string, any>>(child)) return;
 
       // Если это компонент компоновки — ищем внутри
       if (isLayoutComponent(child)) {
@@ -68,7 +68,7 @@ export const getChildrenRecursive = (
 
   const processChildren = (nodes: React.ReactNode) => {
     Children.forEach(nodes, child => {
-      if (!isValidElement(child)) return;
+      if (!isValidElement<Record<string, any>>(child)) return;
 
       // Если это компонент компоновки — ищем внутри
       if (isLayoutComponent(child)) {
@@ -117,7 +117,7 @@ export const getComponentsFromChildren = (
     const result: React.ReactNode[] = [];
 
     Children.forEach(nodes, (child, index) => {
-      if (!isValidElement(child)) return;
+      if (!isValidElement<Record<string, any>>(child)) return;
 
       // Если это компонент компоновки — клонируем с обработанными children
       if (isLayoutComponent(child)) {

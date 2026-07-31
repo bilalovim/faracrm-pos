@@ -42,6 +42,7 @@ import {
   useUpdateMemberPermissionsMutation,
 } from '@/services/api/chat';
 import { useDispatch } from 'react-redux';
+import type { AppDispatch } from '@/store/store';
 import { notifications } from '@mantine/notifications';
 import {
   ChatParticipantSelect,
@@ -121,7 +122,8 @@ function PermissionsBlock({
     <Stack gap="xs">
       {permissionItems.map(item => {
         const key = 'is_admin' in permissions ? item.key : item.defaultKey;
-        const value = (permissions as Record<string, boolean>)[key] ?? false;
+        const value =
+          (permissions as unknown as Record<string, boolean>)[key] ?? false;
 
         return (
           <Group key={key} justify="space-between">
@@ -418,7 +420,7 @@ export function ChatSettingsModal({
   onChatDeleted,
 }: ChatSettingsModalProps) {
   const { t } = useTranslation('chat');
-  const dispatch = useDispatch();
+  const dispatch = useDispatch<AppDispatch>();
 
   // API hooks
   const {
@@ -732,7 +734,7 @@ export function ChatSettingsModal({
               </Group>
 
               <MembersList
-                members={members}
+                members={members as any}
                 currentUserId={currentUserId}
                 isGroupChat={false}
                 onRemove={handleRemoveMember}
@@ -934,7 +936,7 @@ export function ChatSettingsModal({
                 <Divider />
 
                 <MembersList
-                  members={members}
+                  members={members as any}
                   currentUserId={currentUserId}
                   isGroupChat={true}
                   onRemove={handleRemoveMember}

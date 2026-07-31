@@ -13,7 +13,7 @@ interface FaraProps {
 export const Fara = (props: FaraProps) => (
   <Routes>
     {Children.map(props.children, model => {
-      if (!isValidElement(model) || model.type !== Model) {
+      if (!isValidElement<Record<string, any>>(model) || model.type !== Model) {
         // Игнорируем не элементы или элементы не Модели
         return null;
       }

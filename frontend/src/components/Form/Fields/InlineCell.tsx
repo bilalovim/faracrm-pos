@@ -8,7 +8,7 @@
  *   Many2one → Combobox с поиском (InlineCellM2O)
  *   Selection → Select
  */
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   TextInput,
   NumberInput,

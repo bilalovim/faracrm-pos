@@ -115,7 +115,7 @@ export type EditResult<RecordType extends FaraRecord> = RecordType;
 export type EditParams<RecordType extends FaraRecord> = {
   model: string;
   id: Identifier;
-  values: RecordType;
+  values: Partial<RecordType>;
   invalidateTags?: string[];
 };
 
@@ -124,7 +124,7 @@ export type CreateResult = {
 };
 export type CreateParams<RecordType> = {
   model: string;
-  values: RecordType;
+  values: Partial<RecordType>;
 };
 
 export type GetAttachmentParams = {

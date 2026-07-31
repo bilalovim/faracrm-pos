@@ -11,7 +11,7 @@ import { FormPanelsBadges, PanelType } from './Panels';
 import { IconCheck } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 
-export const Toolbar = <RecordType extends FaraRecord>({
+export const Toolbar = ({
   model,
   id,
   isCreateForm,
@@ -44,7 +44,7 @@ export const Toolbar = <RecordType extends FaraRecord>({
   const form = useFormContext();
   const navigate = useNavigate();
   const [showSaved, setShowSaved] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleSaveSuccess = useCallback(() => {
     setShowSaved(true);

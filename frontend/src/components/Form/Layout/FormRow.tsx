@@ -1,5 +1,5 @@
 import { ReactNode, Children } from 'react';
-import { SimpleGrid, Group, Box } from '@mantine/core';
+import { SimpleGrid, Box } from '@mantine/core';
 import classes from './FormLayout.module.css';
 
 interface FormRowProps {

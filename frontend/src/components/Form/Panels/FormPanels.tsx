@@ -6,9 +6,7 @@ import {
   Text,
   Box,
   CloseButton,
-  Tabs,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
 import {
   IconBell,
   IconNotes,

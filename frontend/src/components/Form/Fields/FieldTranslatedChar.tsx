@@ -1,4 +1,4 @@
-import { TextInput, Tooltip, ActionIcon, Group } from '@mantine/core';
+import { TextInput, Tooltip, ActionIcon } from '@mantine/core';
 import { IconLanguage } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 import { useFormContext } from '../FormContext';

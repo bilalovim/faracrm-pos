@@ -78,42 +78,10 @@ import ruReports from './fara_report_docx/locales/ru.json';
 import enWorkspace from './fara_workspace/locales/en.json';
 import ruWorkspace from './fara_workspace/locales/ru.json';
 
-// ============ Функция слияния переводов ============
-type DeepPartial<T> = {
-  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
-};
+// components/Docs — пользовательская документация (справка)
+import enDocs from './components/Docs/locales/en.json';
+import ruDocs from './components/Docs/locales/ru.json';
 
-function deepMerge<T extends Record<string, unknown>>(
-  target: T,
-  ...sources: DeepPartial<T>[]
-): T {
-  const result = { ...target };
-
-  for (const source of sources) {
-    for (const key in source) {
-      const sourceValue = source[key];
-      const targetValue = result[key];
-
-      if (
-        sourceValue &&
-        typeof sourceValue === 'object' &&
-        !Array.isArray(sourceValue) &&
-        targetValue &&
-        typeof targetValue === 'object' &&
-        !Array.isArray(targetValue)
-      ) {
-        (result as Record<string, unknown>)[key] = deepMerge(
-          targetValue as Record<string, unknown>,
-          sourceValue as Record<string, unknown>,
-        );
-      } else if (sourceValue !== undefined) {
-        (result as Record<string, unknown>)[key] = sourceValue;
-      }
-    }
-  }
-
-  return result;
-}
 
 // ============ Склейка переводов ============
 const resources = {
@@ -137,6 +105,7 @@ const resources = {
     saved_filters: enSavedFilters,
     reports: enReports,
     workspace: enWorkspace,
+    docs: enDocs,
   },
   ru: {
     common: ruCommon,
@@ -157,6 +126,7 @@ const resources = {
     saved_filters: ruSavedFilters,
     reports: ruReports,
     workspace: ruWorkspace,
+    docs: ruDocs,
   },
 };
 
@@ -186,6 +156,7 @@ i18n
       'saved_filters',
       'reports',
       'workspace',
+      'docs',
     ],
 
     interpolation: {

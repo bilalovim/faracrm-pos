@@ -38,7 +38,7 @@ const chatApi = api.injectEndpoints({
     getChat: build.query<GetChatResponse, { chatId: number }>({
       query: ({ chatId }) => `/chats/${chatId}`,
       // Привязываем результат запроса к конкретному тегу Chat с его ID
-      providesTags: (result, error, arg) => [{ type: 'Chat', id: arg.chatId }],
+      providesTags: (_result, _error, arg) => [{ type: 'Chat', id: arg.chatId }],
     }),
 
     // Create new chat
@@ -95,7 +95,7 @@ const chatApi = api.injectEndpoints({
         body: { user_id: userId, ...permissions },
       }),
       // Инвалидируем конкретный чат, чтобы обновить список участников в UI
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: 'Chat', id: arg.chatId },
       ],
     }),
@@ -110,7 +110,7 @@ const chatApi = api.injectEndpoints({
         method: 'DELETE',
       }),
       // Инвалидируем конкретный чат, чтобы участник исчез из списка в UI
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: 'Chat', id: arg.chatId },
       ],
     }),
@@ -135,7 +135,7 @@ const chatApi = api.injectEndpoints({
         body: permissions,
       }),
       // Достаем chatId из аргументов мутации (третий параметр 'arg')
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: 'Chat', id: arg.chatId },
       ],
     }),
@@ -164,7 +164,7 @@ const chatApi = api.injectEndpoints({
         body,
       }),
       // Достаем chatId из аргументов мутации (третий параметр 'arg')
-      invalidatesTags: (result, error, arg) => [
+      invalidatesTags: (_result, _error, arg) => [
         { type: 'Chat', id: arg.chatId },
       ],
     }),
@@ -315,7 +315,7 @@ const chatApi = api.injectEndpoints({
         const updateLastMessage = (args: {
           limit: number;
           is_internal?: boolean;
-          chat_type?: string;
+          chat_type?: 'direct' | 'group';
           connector_type?: string;
         }) => {
           dispatch(
@@ -687,6 +687,8 @@ export interface MemberPermissions {
 // Types
 export interface ChatMember {
   id: number;
+  user_id?: number;
+  is_active?: boolean;
   name: string;
   email?: string;
   member_type?: 'user' | 'partner';
@@ -700,7 +702,7 @@ export interface ChatLastMessage {
   body?: string;
   author_id: number;
   create_datetime?: string;
-  message_type: 'comment' | 'notification' | 'system' | 'email' | 'call';
+  message_type?: 'comment' | 'notification' | 'system' | 'email' | 'call';
   // Канал сообщения (email/telegram/...). Для email-превью проверяем его;
   // старые письма несли message_type='email' — оставлен как фолбэк.
   connector_type?: string;
@@ -859,6 +861,7 @@ export interface SendMessageAttachment {
 export interface SendMessageArgs {
   chatId: number;
   body: string;
+  message_type?: string;
   connector_id?: number;
   // Тип выбранного коннектора — только для оптимистик-рендера (email → HTML
   // сразу, без мигания сырым HTML до refetch). В запрос НЕ уходит: бэк сам
@@ -946,7 +949,7 @@ export type WSMessage =
   | WSNewMessage
   | WSTyping
   | WSPresence
-  | WSPresenceSnapshot
+  | WSPresenceUpdate
   | WSRead
   | WSReactionChanged
   | WSMessageEdited

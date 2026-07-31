@@ -67,7 +67,7 @@ export function NotificationListener() {
 
   useEffect(() => {
     const handler = (message: WSMessage) => {
-      if (message.type !== 'new_message' && message.type !== 'chat_created')
+      if (message.type !== 'new_message' && (message.type as string) !== 'chat_created')
         return;
 
       // Skip own messages
@@ -105,7 +105,7 @@ export function NotificationListener() {
         });
       }
 
-      if (message.type === 'chat_created') {
+      if ((message.type as string) === 'chat_created') {
         const chatId = (message as any).chat_id;
         notifications.show({
           title: 'Новый чат',

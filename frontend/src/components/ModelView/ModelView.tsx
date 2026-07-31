@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Group } from '@mantine/core';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ViewSwitcher, ViewType } from '@/components/ViewSwitcher';
 import { Kanban } from '@/components/Kanban';
 import { List } from '@/components/List/List';
@@ -13,7 +13,7 @@ import {
 } from '@reduxjs/toolkit/query/react';
 import classes from './ModelView.module.css';
 
-export interface ModelViewProps<T extends FaraRecord> {
+export interface ModelViewProps {
   model: string;
   fields: string[];
   defaultView?: 'list' | 'kanban';
@@ -31,9 +31,8 @@ export function ModelView<T extends FaraRecord>({
   groupByModel,
   kanbanFields,
   children,
-}: ModelViewProps<T>) {
+}: ModelViewProps) {
   const navigate = useNavigate();
-  const location = useLocation();
   
   // Определяем доступные views
   // Канбан доступен если указаны kanbanFields или groupByField

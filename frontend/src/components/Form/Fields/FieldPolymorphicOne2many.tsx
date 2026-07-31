@@ -2,7 +2,6 @@ import {
   useRef,
   useState,
   useContext,
-  useEffect,
   DragEvent,
   ChangeEvent,
 } from 'react';
@@ -17,14 +16,13 @@ import {
 import { IconUpload, IconFile, IconPlus } from '@tabler/icons-react';
 import { useParams } from 'react-router-dom';
 import { FormFieldsContext, useFormContext } from '../FormContext';
-import { FaraRecord } from '@/services/api/crudTypes';
 import {
   AttachmentPreview,
   ImageGalleryModal,
   isImageMimetype,
   formatFileSize,
 } from '@/components/Attachment';
-import type { GalleryItem, AttachmentData } from '@/components/Attachment';
+import type { GalleryItem } from '@/components/Attachment';
 import classes from './FieldPolymorphicOne2many.module.css';
 import { downloadAttachment, downloadBase64 } from '@/utils/attachmentUrls';
 import { useTranslation } from 'react-i18next';
@@ -53,7 +51,7 @@ interface FieldPolymorphicOne2manyProps {
   columns?: number; // количество колонок в сетке
 }
 
-export const FieldPolymorphicOne2many = <RecordType extends FaraRecord>({
+export const FieldPolymorphicOne2many = ({
   name,
   model,
   label,
@@ -324,7 +322,7 @@ export const FieldPolymorphicOne2many = <RecordType extends FaraRecord>({
                   ? () => handleOpenGallery(index)
                   : undefined
               }
-              showPreview={file.show_preview !== false && showPreview}
+              showPreview={(file as any).show_preview !== false && showPreview}
               previewSize={previewSize}
               showActions={true}
             />

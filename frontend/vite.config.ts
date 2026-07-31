@@ -18,4 +18,20 @@ export default defineConfig({
   //     '@tabler/icons-react': '@tabler/icons-react/dist/esm/icons/index.mjs',
   //   },
   // },
+  // Предбандлим тяжёлые/«многофайловые» зависимости ОДИН раз на старте
+  // dev-сервера, чтобы Vite не «открывал» их лениво при первом заходе на
+  // очередную модель и не перезапускал оптимизатор с полной перезагрузкой
+  // страницы (это и давало «долгий лоадер» между /users, /partners и т.д.).
+  //   • @tabler/icons-react — тысячи отдельных icon-модулей, главный виновник.
+  //   • react-markdown/remark-gfm — тянут за собой десятки мелких ESM (micromark,
+  //     mdast-*), которые всплывают при первом открытии справки (Docs).
+  // На production-сборку (npm run build) это НЕ влияет — только dev-опыт.
+  optimizeDeps: {
+    include: [
+      '@tabler/icons-react',
+      'react-markdown',
+      'remark-gfm',
+      'mantine-datatable',
+    ],
+  },
 });

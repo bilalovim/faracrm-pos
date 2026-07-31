@@ -480,7 +480,7 @@ export function ViewKanbanAttachments() {
 
   // Конвертируем в формат GalleryItem
   const galleryItems: GalleryItem[] = imageAttachments.map(att => ({
-    id: att.id,
+    id: Number(att.id),
     name: att.name || undefined,
     mimetype: att.mimetype || undefined,
   }));
@@ -532,8 +532,8 @@ export function ViewKanbanAttachments() {
           <AttachmentCard
             key={att.id}
             attachment={att}
-            onClick={() => handleClick(att.id)}
-            onOpenGallery={() => handleOpenGallery(att.id)}
+            onClick={() => handleClick(Number(att.id))}
+            onOpenGallery={() => handleOpenGallery(Number(att.id))}
             showAllPreviews={showAllPreviews}
           />
         ))}

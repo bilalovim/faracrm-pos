@@ -5,7 +5,6 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   Group,
   ActionIcon,
-  TextInput,
   Tooltip,
   Box,
   LoadingOverlay,
@@ -22,7 +21,6 @@ import {
   FieldInfo,
   FilterTriplet,
   isTextFieldType,
-  formatFilterLabel,
 } from './types';
 import { useGetFieldsQuery } from '@/services/api/crudApi';
 
@@ -81,7 +79,6 @@ export function SearchFilter({
     activeFilters,
     appliedSavedFilters,
     hasFilters,
-    addFilter,
     addFilters,
     removeFilter,
     removeAppliedSavedFilter,

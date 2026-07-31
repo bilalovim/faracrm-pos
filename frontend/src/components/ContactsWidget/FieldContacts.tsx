@@ -78,7 +78,6 @@ export function FieldContacts({
   maxContacts,
   hidePrimary,
   parentField,
-  children,
 }: FieldContactsProps) {
   const form = useFormContext();
   const { t } = useTranslation('common');
@@ -86,7 +85,7 @@ export function FieldContacts({
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [deleteBulk] = useDeleteBulkMutation();
-  const [create, { isLoading }] = useCreateMutation();
+  const [create] = useCreateMutation();
   const [createChat, { isLoading: creatingChat }] = useCreateChatMutation();
 
   const displayLabel = label ?? name;

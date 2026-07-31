@@ -16,13 +16,12 @@ import {
   Text,
 } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
-import { IconPlus, IconTrash, IconX } from '@tabler/icons-react';
+import { IconPlus, IconX } from '@tabler/icons-react';
 import {
   FieldInfo,
   FilterTriplet,
   Operator,
   getOperatorsForFieldType,
-  formatFilterLabel,
 } from './types';
 
 interface FilterCondition {
@@ -261,7 +260,6 @@ function ConditionRow({
         searchable
         style={{ minWidth: 140, flex: 1 }}
         size="sm"
-        withinPortal
       />
 
       <Select
@@ -272,7 +270,6 @@ function ConditionRow({
         disabled={!condition.field}
         style={{ minWidth: 110 }}
         size="sm"
-        withinPortal
       />
 
       <ValueInput
@@ -348,7 +345,7 @@ function ValueInput({ fieldInfo, value, onChange }: ValueInputProps) {
         <DateInput
           placeholder="Дата"
           value={value ? new Date(value) : null}
-          onChange={date => onChange(date?.toISOString().split('T')[0] || '')}
+          onChange={date => onChange(date || '')}
           valueFormat="DD.MM.YYYY"
           popoverProps={{ withinPortal: true }}
           {...commonProps}
@@ -360,7 +357,7 @@ function ValueInput({ fieldInfo, value, onChange }: ValueInputProps) {
         <DateInput
           placeholder="Дата"
           value={value ? new Date(value) : null}
-          onChange={date => onChange(date?.toISOString() || '')}
+          onChange={date => onChange(date || '')}
           valueFormat="DD.MM.YYYY HH:mm"
           popoverProps={{ withinPortal: true }}
           {...commonProps}
@@ -375,12 +372,19 @@ function ValueInput({ fieldInfo, value, onChange }: ValueInputProps) {
             data={fieldInfo.options.map(opt => ({ value: opt, label: opt }))}
             value={value}
             onChange={onChange}
-            withinPortal
             {...commonProps}
           />
         );
       }
-    // Fallthrough
+      // Нет опций — обычный текстовый ввод (раньше был fallthrough на NumberInput).
+      return (
+        <TextInput
+          placeholder="Значение"
+          value={value}
+          onChange={e => onChange(e.currentTarget.value)}
+          {...commonProps}
+        />
+      );
 
     case 'Many2one':
     case 'PolymorphicMany2one':

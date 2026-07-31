@@ -9,8 +9,16 @@ import {
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { API_BASE_URL } from '@/services/baseQueryWithReauth';
-import { chatApi, WSMessage, WSNewMessage, Chat } from '@/services/api/chat';
-import type { RootState } from '@/store/store';
+import {
+  chatApi,
+  WSMessage,
+  WSNewMessage,
+  WSReactionChanged,
+  WSMessageEdited,
+  WSMessageDeleted,
+  WSMessagePinned,
+} from '@/services/api/chat';
+import type { RootState, AppDispatch } from '@/store/store';
 
 interface ChatWebSocketContextValue {
   isConnected: boolean;
@@ -36,16 +44,10 @@ interface ChatWebSocketProviderProps {
   children: ReactNode;
 }
 
-// Тип для события создания чата
-interface WSChatCreated {
-  type: 'chat_created';
-  chat: Chat;
-}
-
 export function ChatWebSocketProvider({
   children,
 }: ChatWebSocketProviderProps) {
-  const dispatch = useDispatch();
+  const dispatch = useDispatch<AppDispatch>();
   const session = useSelector((state: RootState) => state.auth.session);
   const token = session?.token || '';
   const currentUserId = session?.user_id?.id || 0;
@@ -53,8 +55,8 @@ export function ChatWebSocketProvider({
   const wsRef = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<Set<number>>(new Set());
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pingIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isConnectingRef = useRef(false);
   const isMountedRef = useRef(true);
 
@@ -89,7 +91,7 @@ export function ChatWebSocketProvider({
       });
 
       // Обработка нового чата
-      if (message.type === 'chat_created') {
+      if ((message.type as string) === 'chat_created') {
         const chatId = (message as any).chat_id;
         console.log('New chat created:', chatId);
 
@@ -190,7 +192,7 @@ export function ChatWebSocketProvider({
 
       // Обработка notification (системные уведомления, cron, активности)
       // Перечитываем список чатов чтобы обновить unread_count и last_message
-      if (message.type === 'notification') {
+      if ((message.type as string) === 'notification') {
         dispatch(
           chatApi.util.invalidateTags([
             { type: 'Chat', id: 'LIST' },
@@ -263,7 +265,7 @@ export function ChatWebSocketProvider({
         dispatch(
           chatApi.util.updateQueryData('getChats', { limit: 100 }, draft => {
             const chat = draft.data.find(c => c.id === wsMsg.chat_id);
-            if (chat?.last_message?.id === wsMsg.message_id) {
+            if (chat && chat.last_message && chat.last_message.id === wsMsg.message_id) {
               chat.last_message.body = wsMsg.body;
             }
           }),
@@ -286,7 +288,7 @@ export function ChatWebSocketProvider({
         dispatch(
           chatApi.util.updateQueryData('getChats', { limit: 100 }, draft => {
             const chat = draft.data.find(c => c.id === wsMsg.chat_id);
-            if (chat?.last_message?.id === wsMsg.message_id) {
+            if (chat && chat.last_message?.id === wsMsg.message_id) {
               chat.last_message = undefined as any;
             }
           }),

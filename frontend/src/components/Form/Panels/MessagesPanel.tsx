@@ -41,7 +41,7 @@ interface MessagesPanelProps {
 }
 
 export function MessagesPanel({ resModel, resId }: MessagesPanelProps) {
-  const { t } = useTranslation('chat');
+  useTranslation('chat');
   const session = useSelector(selectCurrentSession);
   const currentUserId = session?.user_id?.id || 0;
   const currentUserName = session?.user_id?.name || '';
@@ -222,7 +222,7 @@ interface FollowBarProps {
   onUnfollow: () => void;
 }
 
-function FollowBar({ isMember, members, currentUserId, onFollow, onUnfollow }: FollowBarProps) {
+function FollowBar({ isMember, members, onFollow, onUnfollow }: FollowBarProps) {
   const activeMembers = members?.filter((m) => m.is_active !== false) || [];
 
   return (

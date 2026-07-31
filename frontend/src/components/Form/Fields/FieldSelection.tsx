@@ -2,7 +2,6 @@ import { Combobox, InputBase, ScrollArea, useCombobox } from '@mantine/core';
 import { IconChevronDown, IconX } from '@tabler/icons-react';
 import { ReactElement, useContext, useEffect, useState } from 'react';
 import { FormFieldsContext, useFormContext } from '../FormContext';
-import { FaraRecord } from '@/services/api/crudTypes';
 import { FieldWrapper } from './FieldWrapper';
 import { LabelPosition } from '../FormSettingsContext';
 
@@ -17,7 +16,7 @@ interface FieldSelectionProps {
   [key: string]: any;
 }
 
-export const FieldSelection = <RecordType extends FaraRecord>({
+export const FieldSelection = ({
   name,
   label,
   labelPosition,
@@ -120,9 +119,9 @@ export const FieldSelection = <RecordType extends FaraRecord>({
 
                 // Если есть onchange - используем handleFieldChange
                 if (hasOnchange && handleFieldChange) {
-                  handleFieldChange(name, record[0]);
+                  handleFieldChange(name, record?.[0]);
                 } else {
-                  form.setValues({ [name]: record[0] });
+                  form.setValues({ [name]: record?.[0] });
                 }
               }
               combobox.closeDropdown();
