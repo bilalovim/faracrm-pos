@@ -3,6 +3,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  startTransition,
   Suspense,
   ComponentType,
 } from 'react';
@@ -97,16 +98,33 @@ export function ViewWrapper({
   // → filters снова пуст → resolved=false → бесконечный лоадер.
   // Теперь после первого resolved=true дальнейшие изменения filters
   // (включая снятие до пустоты) не возвращают его в false.
-  const [filtersResolved, setFiltersResolved] = useState(false);
+  const [filtersResolved, setFiltersResolved] = useState(() => {
+    // Синхронное разрешение на ПЕРВОМ рендере, когда это возможно — тогда
+    // ViewWrapper сразу рендерит ленивый список, тот suspend-ится, и
+    // единственный <Suspense> в FaraRouters удерживает старый экран на
+    // переходе (иначе промежуточный не-suspend-ящийся лоадер закоммитился бы
+    // раньше и удержание бы сорвалось).
+    //   - hideSearch: фильтры не актуальны → сразу.
+    //   - saved_filters прогреты <SavedFiltersPreloader> (в кеше уже на 1-м
+    //     рендере); если у модели нет дефолт-фильтра — список можно сразу.
+    //   - есть дефолт: ждём его применения (filters непустой) — эффект ниже.
+    if (hideSearch) return true;
+    if (savedFiltersReady && !hasDefaultForModel) return true;
+    return false;
+  });
   useEffect(() => {
     if (filtersResolved) return;
     if (hideSearch) {
-      setFiltersResolved(true);
+      startTransition(() => setFiltersResolved(true));
       return;
     }
     if (!savedFiltersReady) return;
     if (!hasDefaultForModel || filters.length > 0) {
-      setFiltersResolved(true);
+      // startTransition: если после применения дефолт-фильтра рендерится
+      // ленивый список, а его чанк ещё не в кеше — suspend всплывёт до
+      // <Suspense> в FaraRouters. Транзиция не даёт показать полноэкранный
+      // fallback (и 300мс-тротл): React держит уже закоммиченный экран.
+      startTransition(() => setFiltersResolved(true));
     }
   }, [filtersResolved, hideSearch, savedFiltersReady, hasDefaultForModel, filters.length]);
 
@@ -211,11 +229,12 @@ export function ViewWrapper({
           </Suspense>
         ) : null;
       default:
-        return (
-          <Suspense fallback={fallback}>
-            <ListComponent />
-          </Suspense>
-        );
+        // Список — БЕЗ локального <Suspense>: его ленивый чанк всплывает до
+        // единственного <Suspense> в FaraRouters, чтобы на переходе между
+        // разделами старый экран удерживался затемнённым (а не подменялся
+        // локальным спиннером). Kanban/Gantt — переключение ВИДА (не
+        // навигация), там локальная заглушка уместна, Suspense оставляем.
+        return <ListComponent />;
     }
   }, [
     viewType,

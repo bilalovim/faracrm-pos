@@ -1,8 +1,6 @@
-import { Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 
 import { RouteModelProps } from './type';
-import LoadingScreen from '@/components/LoadingScreen/LoadingScreen';
 import { ViewWrapper } from '@/components/ViewWrapper';
 
 export const Model = ({ 
@@ -14,32 +12,12 @@ export const Model = ({
 }: RouteModelProps) => {
   return (
     <Routes>
-      <Route
-        path="create/*"
-        element={
-          <Suspense
-            fallback={
-              <div className="flex flex-auto flex-col h-[100vh]">
-                <LoadingScreen />
-              </div>
-            }>
-            {Form && <Form />}
-          </Suspense>
-        }
-      />
-      <Route
-        path=":id/*"
-        element={
-          <Suspense
-            fallback={
-              <div className="flex flex-auto flex-col h-[100vh]">
-                <LoadingScreen />
-              </div>
-            }>
-            {Form && <Form />}
-          </Suspense>
-        }
-      />
+      {/* Формы БЕЗ локального <Suspense>: ленивый чанк формы всплывает до
+          единственного <Suspense> в FaraRouters, чтобы на переходе список
+          удерживался затемнённым, пока форма грузится (а не подменялся
+          локальным полноэкранным спиннером). */}
+      <Route path="create/*" element={Form ? <Form /> : null} />
+      <Route path=":id/*" element={Form ? <Form /> : null} />
       <Route
         path="/*"
         element={
