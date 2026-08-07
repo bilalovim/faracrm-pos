@@ -22,6 +22,7 @@ import {
   useGetChatMessagesQuery,
   useMarkChatAsReadMutation,
 } from '@/services/api/chat';
+import { parseNotificationBody } from '@/fara_chat/components/NotificationMessageContent';
 import { useSelector } from 'react-redux';
 import type { RootState } from '@/store/store';
 
@@ -67,11 +68,9 @@ export function ActivityNotification() {
   }, [systemChatId, markAsRead]);
 
   const handleClickNotification = useCallback(
-    (resModel?: string, resId?: number) => {
+    (path: string | null) => {
       setOpened(false);
-      if (resModel && resId) {
-        navigate(`/${resModel}/${resId}`);
-      }
+      if (path) navigate(path);
     },
     [navigate],
   );
@@ -141,46 +140,49 @@ export function ActivityNotification() {
             </Center>
           )}
 
-          {messages.map((msg: any) => (
-            <UnstyledButton
-              key={msg.id}
-              w="100%"
-              p="sm"
-              style={{
-                borderBottom: '1px solid var(--mantine-color-gray-2)',
-                backgroundColor: msg.is_read
-                  ? undefined
-                  : 'var(--mantine-color-orange-0)',
-              }}
-              onClick={() =>
-                handleClickNotification(msg.res_model, msg.res_id)
-              }>
-              <Group gap="xs" wrap="nowrap" align="flex-start">
-                <Box style={{ flex: 1 }}>
-                  <Text size="sm" lineClamp={2}>
-                    {msg.body}
-                  </Text>
-                  <Group gap="xs" mt={4}>
-                    <Text size="xs" c="dimmed">
-                      {msg.create_datetime
-                        ? new Date(msg.create_datetime).toLocaleString()
-                        : ''}
+          {messages.map((msg: any) => {
+            const { text, url } = parseNotificationBody(msg.body ?? '');
+            const sourceModel = url ? url.split('/')[1] : null;
+            return (
+              <UnstyledButton
+                key={msg.id}
+                w="100%"
+                p="sm"
+                style={{
+                  borderBottom: '1px solid var(--mantine-color-gray-2)',
+                  backgroundColor: msg.is_read
+                    ? undefined
+                    : 'var(--mantine-color-orange-0)',
+                  cursor: url ? 'pointer' : 'default',
+                }}
+                onClick={() => handleClickNotification(url ?? null)}>
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <Box style={{ flex: 1 }}>
+                    <Text size="sm" lineClamp={2}>
+                      {text}
                     </Text>
-                    {msg.res_model && (
-                      <Badge size="xs" variant="light" color="gray">
-                        {msg.res_model}
-                      </Badge>
-                    )}
-                  </Group>
-                </Box>
-                {msg.res_model && msg.res_id && (
-                  <ActionIcon variant="subtle" size="sm" color="gray">
-                    <IconExternalLink size={14} />
-                  </ActionIcon>
-                )}
-              </Group>
-            </UnstyledButton>
-          ))}
+                    <Group gap="xs" mt={4}>
+                      <Text size="xs" c="dimmed">
+                        {msg.create_datetime
+                          ? new Date(msg.create_datetime).toLocaleString()
+                          : ''}
+                      </Text>
+                      {sourceModel && (
+                        <Badge size="xs" variant="light" color="gray">
+                          {sourceModel}
+                        </Badge>
+                      )}
+                    </Group>
+                  </Box>
+                  {url && (
+                    <ActionIcon variant="subtle" size="sm" color="gray">
+                      <IconExternalLink size={14} />
+                    </ActionIcon>
+                  )}
+                </Group>
+              </UnstyledButton>
+            );
+          })}
         </ScrollArea.Autosize>
 
         {/* Футер */}

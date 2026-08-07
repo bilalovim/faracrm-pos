@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, timedelta
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -410,9 +411,19 @@ class Activity(AuditMixin, DotModel):
             emoji = "🔴" if is_overdue else "🔔"
             status = "просрочена" if is_overdue else "срок наступил"
 
+            text = f"{emoji} {type_name}{summary} — {status}"
+
+            # Тело уведомления — JSON-формат {text, url}, по аналогии с email
+            url = (
+                f"/{activity.res_model}/{activity.res_id}"
+                if activity.res_model and activity.res_id
+                else None
+            )
+            body = json.dumps({"text": text, "url": url}, ensure_ascii=False)
+
             await self._send_notification(
                 user_id=activity.user_id.id,
-                body=f"{emoji} {type_name}{summary} — {status}",
+                body=body,
                 res_model=activity.res_model,
                 res_id=activity.res_id,
             )

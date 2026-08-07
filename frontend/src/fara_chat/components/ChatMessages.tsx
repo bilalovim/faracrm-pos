@@ -58,6 +58,7 @@ import {
   EmailMessageContent,
   parseEmailBody,
 } from './EmailMessageContent';
+import { NotificationMessageContent } from './NotificationMessageContent';
 import { CallMessageContent } from './CallMessageContent';
 import { connectorIcon } from './connectorMeta';
 
@@ -640,6 +641,10 @@ export function ChatMessages({
                           />
                         ) : isEmailMessage(message) ? (
                           <EmailMessageContent body={message.body || ''} />
+                        ) : message.message_type === 'notification' ? (
+                          <NotificationMessageContent
+                            body={message.body ?? ''}
+                          />
                         ) : (
                           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                             {message.body}

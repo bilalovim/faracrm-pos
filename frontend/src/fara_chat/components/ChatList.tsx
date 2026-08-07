@@ -77,13 +77,34 @@ function getMessagePreview(
     let html = lastMessage.body;
     try {
       const data = JSON.parse(lastMessage.body);
-      if (data && typeof data === 'object' && ('html' in data || 'subject' in data)) {
+      if (
+        data &&
+        typeof data === 'object' &&
+        ('html' in data || 'subject' in data)
+      ) {
         html = data.html || data.subject || '';
       }
     } catch {
       // старый формат (plain HTML) — оставляем как есть
     }
     return stripHtml(html);
+  }
+  if (lastMessage.message_type === 'notification') {
+    // notification-формат {text, url}; для превью берём text (фолбэк —
+    // весь body для старых уведомлений без формата). url в превью не нужен.
+    try {
+      const data = JSON.parse(lastMessage.body);
+      if (
+        data &&
+        typeof data === 'object' &&
+        ('text' in data || 'url' in data)
+      ) {
+        return data.text || '';
+      }
+    } catch {
+      // старый формат (plain text) — оставляем как есть
+    }
+    return lastMessage.body;
   }
   if (lastMessage.message_type === 'system') {
     try {
@@ -248,7 +269,8 @@ export function ChatList({
 
   // Динамическое имя: в direct-чатах — имя собеседника, а не сохранённое
   // chat.name (там мог остаться формат «X - Y» / имя админа).
-  const getDisplayName = (chat: Chat) => getOtherMember(chat)?.name || chat.name;
+  const getDisplayName = (chat: Chat) =>
+    getOtherMember(chat)?.name || chat.name;
 
   // Filter chats by search (по отображаемому имени)
   const filteredChats = chats.filter(chat =>
