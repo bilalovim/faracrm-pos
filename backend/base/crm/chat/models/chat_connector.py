@@ -280,18 +280,20 @@ class ChatConnector(AuditMixin, DotModel):
     ) -> int:
         """
         Создание коннектора с автоматическим созданием outbox-аккаунта.
+
+        @hybridmethod, а CRUD-роутер зовёт его ОТ КЛАССА
         """
         # Создаём коннектор (Many2many operator_ids заполнится автоматически)
         self.id = await super().create(payload, session, depends_jobs)
 
         # Создаём outbox-аккаунт (обязательно, если задан external_account_id)
-        await self._ensure_outbox_account()
+        await self._ensure_outbox_account(payload)
 
         # Авто-папка коннектора: ОДНА глобальная папка на коннектор
         # (user_id IS NULL, видна всем).
         try:
             await env.models.chat_folder.ensure_connector_folder(
-                self.id, self.name
+                payload.id, payload.name
             )
         except Exception as e:
             logger.warning("connector folder seeding skipped: %s", e)
@@ -322,13 +324,17 @@ class ChatConnector(AuditMixin, DotModel):
 
         return result
 
-    async def _ensure_outbox_account(self) -> None:
+    async def _ensure_outbox_account(
+        self, payload: "ChatConnector | None" = None
+    ) -> None:
         """Создать (или найти) outbox-аккаунт коннектора и привязать в outbox_account_id.
 
         Идемпотентно. Если external_account_id пустой — outbox не создаётся.
         Если уже существует запись chat_external_account с таким external_id
         и connector_id — используем её. Иначе создаём новую.
         """
+        if payload:
+            self = payload
 
         if not self.external_account_id:
             return
