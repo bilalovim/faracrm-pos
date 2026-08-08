@@ -18,6 +18,20 @@ import { FieldMany2one } from '@/components/Form/Fields/FieldMany2one';
 import { FormSection, FormRow } from '@/components/Form/Layout';
 import { IconFileInvoice } from '@tabler/icons-react';
 import { registerExtension } from '@/shared/extensions';
+import { Triplet } from '@/services/api/crudTypes';
+
+/**
+ * домен для contract_id, показываем только договоры того же
+ * контрагента и той же компании, что выбраны в заказе.
+ */
+const getContractFilter = (values: Record<string, any>): Triplet[] => {
+  const domain: Triplet[] = [];
+  const partnerId = values?.partner_id?.id;
+  const companyId = values?.company_id?.id;
+  if (partnerId) domain.push(['partner_id', '=', partnerId]);
+  if (companyId) domain.push(['company_id', '=', companyId]);
+  return domain;
+};
 
 export function ViewFormSaleContract() {
   // Внутри extension'а dispatch <Field> → конкретный компонент НЕ
@@ -29,7 +43,11 @@ export function ViewFormSaleContract() {
   return (
     <FormSection title="Договор" icon={<IconFileInvoice size={18} />}>
       <FormRow cols={2}>
-        <FieldMany2one name="contract_id" label="Договор" />
+        <FieldMany2one
+          name="contract_id"
+          label="Договор"
+          filter={getContractFilter}
+        />
       </FormRow>
     </FormSection>
   );
@@ -43,9 +61,6 @@ export function ViewFormSaleContract() {
 // поля из children с полями из getExtensionFields(model), иначе
 // contract_id не попадёт в запрос /sales/{id} и /default_values,
 // а Many2one не сможет отрисоваться (нет metadata).
-registerExtension(
-  'sales',
-  ViewFormSaleContract,
-  'after:FormTab:info',
-  ['contract_id'],
-);
+registerExtension('sales', ViewFormSaleContract, 'after:FormTab:info', [
+  'contract_id',
+]);
