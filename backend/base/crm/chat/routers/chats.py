@@ -1202,6 +1202,45 @@ async def delete_chat(req: Request, chat_id: int):
     return {"success": True}
 
 
+@router_private.post("/chats/{chat_id}/restore")
+async def restore_chat(req: Request, chat_id: int):
+    """
+    Восстановить мягко удалённый чат (active=false → true).
+
+    Права симметричны delete_chat:
+    - direct: членство + системный is_admin (администратор системы);
+    - остальные: права админа чата (ChatMember.is_admin).
+
+    Правила модели chat пропускают участника к записи независимо от active,
+    поэтому удалённый чат находится штатным get. Само восстановление и
+    live-переоткрытие в сайдбаре делает chat.reactivate()
+    (идемпотентно, если чат уже активен).
+    """
+    env: "Environment" = req.app.state.env
+    auth_session: "Session" = req.state.session
+    user_id = auth_session.user_id.id
+
+    chat = await env.models.chat.get(
+        chat_id, fields=["id", "chat_type", "active"]
+    )
+
+    if chat.chat_type == "direct":
+        await ChatMember.check_membership(chat_id, user_id)
+        if not auth_session.user_id.is_admin:
+            raise FaraException(
+                {
+                    "content": "ADMIN_REQUIRED",
+                    "status_code": HTTP_403_FORBIDDEN,
+                }
+            )
+    else:
+        await ChatMember.check_admin(chat_id, user_id)
+
+    await chat.reactivate()
+
+    return {"success": True}
+
+
 @router_private.get("/chats/{chat_id}/connectors")
 async def get_chat_connectors(req: Request, chat_id: int):
     """Получить список доступных коннекторов для чата."""

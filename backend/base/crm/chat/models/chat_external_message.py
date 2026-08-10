@@ -15,6 +15,7 @@ from backend.base.system.dotorm.dotorm.model import DotModel
 from backend.base.system.core.enviroment import env
 
 if TYPE_CHECKING:
+    from backend.base.crm.chat.models.chat import Chat
     from backend.base.crm.chat.models.chat_message import ChatMessage
     from backend.base.crm.chat.models.chat_connector import ChatConnector
 
@@ -142,7 +143,7 @@ class ChatExternalMessage(DotModel):
     @hybridmethod
     async def thread_incoming_chat(
         self, external_ids: list[str], connector_id: int
-    ) -> int | None:
+    ) -> "Chat | None":
         """
         ВХОДЯЩЕЕ: в какой чат лёг тред, на который отвечает это сообщение.
 
@@ -152,8 +153,11 @@ class ChatExternalMessage(DotModel):
         срезать часть заголовков — уцелевшего одного хватит, чтобы узнать чат.
         Из совпавших берём самый свежий.
 
-        Возвращает chat_id или None. None — не ошибка: письмо могло прийти
-        новым, а не ответом; вызывающий откатится на поиск по адресу.
+        Возвращает (chat_id, chat.active) или None. active отдаём вместе с
+        chat_id (тем же запросом, JOIN chat), чтобы вызывающий не делал
+        отдельный SELECT для реактивации удалённого чата. None — не ошибка:
+        письмо могло прийти новым, а не ответом; вызывающий откатится на
+        поиск по адресу.
         """
         if not external_ids:
             return None
@@ -161,9 +165,10 @@ class ChatExternalMessage(DotModel):
         session = self._get_db_session()
         rows = await session.execute(
             """
-            SELECT m.chat_id
+            SELECT m.chat_id, c.active
             FROM chat_external_message em
             JOIN chat_message m ON m.id = em.message_id
+            JOIN chat c ON c.id = m.chat_id
             WHERE em.external_id = ANY(%s::text[])
               AND em.connector_id = %s
             ORDER BY em.id DESC
@@ -171,7 +176,9 @@ class ChatExternalMessage(DotModel):
             """,
             (list(external_ids), connector_id),
         )
-        return rows[0]["chat_id"] if rows else None
+        if not rows:
+            return None
+        return env.models.chat(id=rows[0]["chat_id"], active=rows[0]["active"])
 
     @hybridmethod
     async def create_link(

@@ -325,11 +325,12 @@ class Activity(AuditMixin, DotModel):
                 ("name", "=", f"__system__{user_id}"),
                 ("chat_type", "=", "direct"),
             ],
-            fields=["id"],
+            fields=["id", "active"],
             limit=1,
         )
 
         if chats:
+            await chats[0].reactivate()
             return chats[0].id
 
         # Создаём новый системный чат

@@ -38,7 +38,9 @@ const chatApi = api.injectEndpoints({
     getChat: build.query<GetChatResponse, { chatId: number }>({
       query: ({ chatId }) => `/chats/${chatId}`,
       // Привязываем результат запроса к конкретному тегу Chat с его ID
-      providesTags: (_result, _error, arg) => [{ type: 'Chat', id: arg.chatId }],
+      providesTags: (_result, _error, arg) => [
+        { type: 'Chat', id: arg.chatId },
+      ],
     }),
 
     // Create new chat
@@ -183,6 +185,17 @@ const chatApi = api.injectEndpoints({
       query: ({ chatId }) => ({
         url: `/chats/${chatId}`,
         method: 'DELETE',
+      }),
+      invalidatesTags: [{ type: 'Chat', id: 'LIST' }],
+    }),
+
+    // Restore a soft-deleted chat (active=false в true). Бэк ставит active=true
+    // и шлёт chat_created участникам, список рефетчит, чат перестаёт быть
+    // зачёркнутым / всплывает обратно.
+    restoreChat: build.mutation<{ success: boolean }, { chatId: number }>({
+      query: ({ chatId }) => ({
+        url: `/chats/${chatId}/restore`,
+        method: 'POST',
       }),
       invalidatesTags: [{ type: 'Chat', id: 'LIST' }],
     }),
@@ -350,7 +363,8 @@ const chatApi = api.injectEndpoints({
                     ...optimisticMessage,
                     id: data.data.id,
                     create_datetime:
-                      data.data.create_datetime || optimisticMessage.create_datetime,
+                      data.data.create_datetime ||
+                      optimisticMessage.create_datetime,
                     attachments: data.data.attachments,
                   };
                 }
@@ -1117,6 +1131,7 @@ export const {
   useUpdateChatMutation,
   useLeaveChatMutation,
   useDeleteChatMutation,
+  useRestoreChatMutation,
   useGetChatConnectorsQuery,
   useSetChatDefaultConnectorMutation,
   useGetChatEmailSubjectQuery,

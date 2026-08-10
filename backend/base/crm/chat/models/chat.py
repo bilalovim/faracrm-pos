@@ -716,6 +716,26 @@ class Chat(AuditMixin, DotModel):
         now = datetime.now(timezone.utc)
         await self.update(Chat(last_message_date=now, update_datetime=now))
 
+    async def reactivate(self) -> bool:
+        """Вернуть мягко удалённый чат (active=false в true) при новом событии."""
+
+        if self.active:
+            return True
+
+        await self.update(env.models.chat(active=True))
+        session = self._get_db_session()
+
+        # параллельную рассылку с глушением одиночных сбоёв
+        member_rows = await session.execute(
+            "SELECT user_id FROM chat_member "
+            "WHERE chat_id = %s AND user_id IS NOT NULL AND is_active = true",
+            (self.id,),
+        )
+        await env.apps.chat.chat_manager.notify_new_chat_bulk(
+            [r["user_id"] for r in member_rows], self.id
+        )
+        return True
+
     async def get_available_connectors(
         self, current_user_id: int | None = None
     ):

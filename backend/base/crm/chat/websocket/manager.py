@@ -354,6 +354,32 @@ class ConnectionManager:
                 },
             )
 
+    async def notify_new_chat_bulk(
+        self, user_ids: list[int], chat_id: int
+    ) -> None:
+        """Уведомить нескольких пользователей о новом/восстановленном чате
+        ПАРАЛЛЕЛЬНО (gather). Одиночный сбой доставки не роняет остальных —
+        глушим поштучно (return_exceptions) и логируем. Пустой список — no-op.
+
+        Используется, например, при восстановлении мягко удалённого чата
+        (Chat.reactivate): чат надо вернуть в сайдбар сразу всем участникам.
+        """
+        user_ids = list(user_ids)
+        if not user_ids:
+            return
+        results = await asyncio.gather(
+            *(self.notify_new_chat(uid, chat_id) for uid in user_ids),
+            return_exceptions=True,
+        )
+        for uid, res in zip(user_ids, results):
+            if isinstance(res, Exception):
+                logger.warning(
+                    "notify_new_chat_bulk failed (user=%s chat=%s): %s",
+                    uid,
+                    chat_id,
+                    res,
+                )
+
     # ──────────────────────────────────────────────
     # PG_NOTIFY EVENT HANDLER
     # Вызывается при получении event от PostgreSQL LISTEN.

@@ -25,6 +25,7 @@ import {
   IconAdjustments,
   IconPin,
   IconPinnedOff,
+  IconRestore,
 } from '@tabler/icons-react';
 import { ViewSettingsPopover, ViewSettingsOption } from './ViewSettingsPopover';
 import { useTranslation } from 'react-i18next';
@@ -32,6 +33,7 @@ import DOMPurify from 'dompurify';
 import {
   useGetChatsQuery,
   usePinChatMutation,
+  useRestoreChatMutation,
   Chat,
   ChatLastMessage,
 } from '@/services/api/chat';
@@ -90,7 +92,7 @@ function getMessagePreview(
     return stripHtml(html);
   }
   if (lastMessage.message_type === 'notification') {
-    // notification-формат {text, url}; для превью берём text (фолбэк —
+    // body — notification-формат {text, url}; для превью берём text (фолбэк —
     // весь body для старых уведомлений без формата). url в превью не нужен.
     try {
       const data = JSON.parse(lastMessage.body);
@@ -237,12 +239,20 @@ export function ChatList({
     queryArgs as any,
   );
   const [pinChat] = usePinChatMutation();
+  const [restoreChat] = useRestoreChatMutation();
 
   // Закрепить/открепить чат. stopPropagation в обработчиках меню не даёт
   // клику выбрать чат — здесь просто шлём мутацию (список пересортируется
   // на бэке после инвалидации Chat LIST).
   const togglePin = (chat: Chat) => {
     pinChat({ chatId: chat.id, pinned: !chat.is_pinned });
+  };
+
+  // Восстановить мягко удалённый чат (active=false). Пункт меню виден только
+  // у удалённых чатов (их показывает тумблер «Показывать удалённые чаты»).
+  // Бэк вернёт active=true и пришлёт chat_created → список рефетчит.
+  const handleRestore = (chat: Chat) => {
+    restoreChat({ chatId: chat.id });
   };
 
   // Передаём refetch наверх при монтировании
@@ -497,6 +507,13 @@ export function ChatList({
                             onClick={() => togglePin(chat)}>
                             {chat.is_pinned ? t('unpin') : t('pin')}
                           </Menu.Item>
+                          {chat.active === false && (
+                            <Menu.Item
+                              leftSection={<IconRestore size={16} />}
+                              onClick={() => handleRestore(chat)}>
+                              {t('restoreChat', 'Восстановить чат')}
+                            </Menu.Item>
+                          )}
                         </Menu.Dropdown>
                       </Menu>
                     </Group>

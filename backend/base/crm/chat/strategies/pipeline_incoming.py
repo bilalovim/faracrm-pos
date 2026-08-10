@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from backend.base.crm.partners.models.contact import Contact
     from backend.base.crm.chat.models.chat_connector import ChatConnector
     from backend.base.crm.chat.models.chat_message import ChatMessage
+    from backend.base.crm.chat.models.chat import Chat
     from backend.base.crm.chat.models.chat_external_chat import (
         ChatExternalChat,
     )
@@ -112,10 +113,11 @@ class IncomingMessage:
     attachments_payload: list = field(default_factory=list)
 
     # обязательные но заполняются постепенно
+    chat: "Chat" = field(init=False)
+    chat_id: int = field(init=False)
     counterparty_external_id: str = field(init=False)
     contact: "Contact" = field(init=False)
     route: "IncomingRoute" = field(init=False)
-    chat_id: int = field(init=False)
     message: "ChatMessage" = field(init=False)
 
 
@@ -229,15 +231,15 @@ class IncomingMessagePipeline:
         ctx = self.ctx
         if not ctx.adapter.thread_message_ids:
             return False
-        chat_id = (
-            await ctx.env.models.chat_external_message.thread_incoming_chat(
-                external_ids=ctx.adapter.thread_message_ids,
-                connector_id=ctx.connector.id,
-            )
+        chat = await ctx.env.models.chat_external_message.thread_incoming_chat(
+            external_ids=ctx.adapter.thread_message_ids,
+            connector_id=ctx.connector.id,
         )
-        if not chat_id:
+        if not chat:
             return False
-        ctx.chat_id = chat_id
+
+        ctx.chat = chat
+        ctx.chat_id = chat.id
         ctx.route = IncomingRoute.ROUTED_BY_THREAD
         return True
 
@@ -246,7 +248,8 @@ class IncomingMessagePipeline:
         ctx = self.ctx
         if not (ctx.external_chat and ctx.external_chat.chat_id):
             return False
-        ctx.chat_id = ctx.external_chat.chat_id.id
+        ctx.chat = ctx.external_chat.chat_id
+        ctx.chat_id = ctx.chat.id
         ctx.route = IncomingRoute.ROUTED_BY_LINK
         return True
 
@@ -261,6 +264,7 @@ class IncomingMessagePipeline:
             connector=ctx.connector,
             partner_name=ctx.counterparty_name,
         )
+        ctx.chat = chat
         ctx.chat_id = chat.id
         ctx.route = (
             IncomingRoute.ROUTED_PARTNER_NEW
@@ -346,6 +350,10 @@ class IncomingMessagePipeline:
         чтобы бинарный контент показывался вживую, без F5.
         """
         ctx = self.ctx
+        # мягко удалённый чат не должен молча принимать входящее: если тред лёг
+        # в удалённый чат, возвращаем его к жизни иначе оператор не увидит
+
+        await ctx.chat.reactivate()
         ctx.author_user_id, ctx.author_partner_id = self._resolve_author()
         message = await ctx.env.models.chat_message.post_message(
             chat_id=ctx.chat_id,
