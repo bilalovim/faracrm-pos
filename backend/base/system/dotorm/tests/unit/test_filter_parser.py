@@ -582,3 +582,51 @@ class TestFilterParserIsTriplet:
         """Test invalid triplet that is not a sequence."""
         assert self.parser._is_triplet("not a triplet") is False
         assert self.parser._is_triplet(123) is False
+
+
+class TestValueCoercionByFieldType:
+    """Значение фильтра приводит само поле (Field.to_sql_filter).
+
+    В JSON нет дат — фильтр по датному полю приезжает строкой, а драйвер в
+    параметр DATE/TIMESTAMP-колонки строку не принимает. Знает об этом только
+    поле, поэтому парсеру передаются поля модели.
+    """
+
+    def setup_method(self):
+        from dotorm.components.filter_parser import FilterParser
+        from dotorm.components.dialect import POSTGRES
+        from dotorm.fields import Char, Date, Datetime
+
+        self.parser = FilterParser(
+            POSTGRES,
+            {"started_at": Datetime(), "day": Date(), "code": Char()},
+        )
+
+    def test_datetime_string_becomes_datetime(self):
+        import datetime
+
+        _, values = self.parser.parse(
+            ("started_at", ">=", "2026-08-16T00:00:00+03:00")
+        )
+
+        assert isinstance(values[0], datetime.datetime)
+        assert values[0].tzinfo is not None
+
+    def test_date_string_becomes_date(self):
+        import datetime
+
+        _, values = self.parser.parse(("day", "=", "2026-08-16"))
+
+        assert values[0] == datetime.date(2026, 8, 16)
+
+    def test_text_field_keeps_string(self):
+        """Дата-подобная строка в текстовом поле остаётся строкой."""
+        _, values = self.parser.parse(("code", "=", "2026-08-16"))
+
+        assert values[0] == "2026-08-16"
+
+    def test_unknown_field_keeps_value(self):
+        """Поля нет в схеме (rules-домен по чужой колонке) — не трогаем."""
+        _, values = self.parser.parse(("whatever", "=", "2026-08-16"))
+
+        assert values[0] == "2026-08-16"

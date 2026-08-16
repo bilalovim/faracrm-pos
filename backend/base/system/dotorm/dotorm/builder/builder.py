@@ -65,7 +65,7 @@ class Builder(
         self.table = table
         self.fields = fields
         self.dialect = dialect
-        self.filter_parser = FilterParser(dialect)
+        self.filter_parser = FilterParser(dialect, fields)
 
     def get_store_fields(self) -> list[str]:
         """Returns only fields that are stored in DB (store=True)."""

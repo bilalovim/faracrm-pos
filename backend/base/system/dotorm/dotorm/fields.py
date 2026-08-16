@@ -214,6 +214,15 @@ class Field[FieldType]:
         """
         return f"{field_name}=%s", value
 
+    def to_sql_filter(self, value: Any) -> Any:
+        """Значение из фильтра → bind-value. По умолчанию как есть.
+
+        Симметрично to_sql_update, но для WHERE: в фильтре значение приходит
+        из JSON (тип теряется), а типы полей знает только само поле —
+        см. Datetime/Date.
+        """
+        return value
+
     @staticmethod
     def _can_apply_to_db(default: Any) -> bool:
         """Можно ли default сериализовать как DDL DEFAULT литерал.
@@ -519,11 +528,27 @@ class Datetime(Field[datetime.datetime]):
     class _db_postgres:
         sql_type = "TIMESTAMPTZ"
 
+    def to_sql_filter(self, value: Any) -> Any:
+        """ISO-строка из фильтра → datetime (драйвер строку не примет).
+
+        Без смещения считаем время локальным.
+        """
+        if not isinstance(value, str):
+            return value
+        parsed = datetime.datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo else parsed.astimezone()
+
 
 class Date(Field[datetime.date]):
     """Date field."""
 
     sql_type = "DATE"
+
+    def to_sql_filter(self, value: Any) -> Any:
+        """ISO-строка из фильтра → date (принимаем и дату-время)."""
+        if not isinstance(value, str):
+            return value
+        return datetime.datetime.fromisoformat(value).date()
 
 
 class Time(Field[datetime.time]):

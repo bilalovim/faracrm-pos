@@ -5,32 +5,12 @@ Converts filter expressions to SQL WHERE clauses.
 Extracted to avoid code duplication in builders.
 """
 
-from datetime import datetime
-from typing import Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union
 
 from .dialect import Dialect
 
-
-def _parse_iso_datetime(value: Any) -> Any:
-    """Строка-дата → datetime; всё остальное возвращаем как есть.
-
-    Нужно потому, что в JSON типа «дата» нет: фильтр по Date/Datetime-полю
-    приезжает с фронта строкой ('2026-08-16' от ручного фильтра по дате,
-    '2026-08-15T21:00:00.000Z' от фильтров периода), а драйвер в параметр
-    DATE/TIMESTAMP-колонки строку не принимает — без приведения поиск падает
-    DataError'ом.
-
-    Без смещения считаем время локальным. Формат без дефисов ('20260816')
-    fromisoformat тоже понимает как дату — его отсекаем: это скорее
-    8-значный код в текстовом поле, чем дата.
-    """
-    if not isinstance(value, str) or "-" not in value:
-        return value
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return value
-    return parsed if parsed.tzinfo else parsed.astimezone()
+if TYPE_CHECKING:
+    from ..fields import Field
 
 
 # Type definitions
@@ -135,8 +115,13 @@ class FilterParser:
         # values: (True, "admin", True)
     """
 
-    def __init__(self, dialect: Dialect):
+    def __init__(
+        self, dialect: Dialect, fields: dict[str, "Field"] | None = None
+    ):
         self.dialect = dialect
+        # Поля модели — чтобы значение приводило само поле (to_sql_filter):
+        # в JSON нет дат, они приезжают строками, а драйверу нужен datetime.
+        self.fields = fields or {}
 
     def _is_triplet(self, expr: Any) -> bool:
         """Check if expression is a simple triplet."""
@@ -167,8 +152,11 @@ class FilterParser:
 
         # Simple triplet: ("field", "op", value)
         if self._is_triplet(filter_expr):
-            field, op, value = filter_expr
-            field = f"{escape}{field}{escape}"
+            name, op, value = filter_expr
+            model_field = self.fields.get(name)
+            if model_field is not None:
+                value = model_field.to_sql_filter(value)
+            field = f"{escape}{name}{escape}"
             assert isinstance(op, str)
             op = op.lower()
 
@@ -210,7 +198,7 @@ class FilterParser:
                 #     clause = f"({field} IS NULL OR {field} != %s)"
                 #     return clause, (value,)
                 clause = f"{field} {op} %s"
-                return clause, (_parse_iso_datetime(value),)
+                return clause, (value,)
 
             elif op == "is null":
                 return f"{field} IS NULL", ()
