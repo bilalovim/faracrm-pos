@@ -53,6 +53,7 @@ export function ViewListCall({ filter }: ViewListProps = {}) {
         sort="started_at"
         filter={listFilter}
         massActions={false}>
+        <Field name="id" />
         <Field
           name="started_at"
           label={t('calls.time', 'Время')}
@@ -141,10 +142,7 @@ export function ViewFormCall(props: ViewFormProps) {
         </FormRow>
         <FormRow cols={2}>
           <Field name="disposition" label={t('calls.disposition', 'Статус')} />
-          <Field
-            name="is_internal"
-            label={t('calls.internal', 'Внутренний')}
-          />
+          <Field name="is_internal" label={t('calls.internal', 'Внутренний')} />
         </FormRow>
         <FormRow cols={2}>
           <Field
@@ -166,10 +164,7 @@ export function ViewFormCall(props: ViewFormProps) {
           <Field name="number_to" label={t('calls.numberTo', 'Куда')} />
         </FormRow>
         <FormRow cols={2}>
-          <Field
-            name="phone_number_id"
-            label={t('calls.line', 'Наша линия')}
-          />
+          <Field name="phone_number_id" label={t('calls.line', 'Наша линия')} />
           <Field name="partner_id" label={t('calls.partner', 'Партнёр')} />
         </FormRow>
         <FormRow cols={2}>
