@@ -1,13 +1,23 @@
 # Copyright 2025 FARA CRM
-# Chat Phone module - Calls list & analytics router (telephony)
+# Chat Phone module - Calls analytics router (telephony)
 #
-# Звонок = независимая модель `call` (Архитектура 2). Экран «Звонки» читает её
-# напрямую (без JOIN-ов через chat_external_chat/chat_message).
+# Звонок = независимая модель `call` (Архитектура 2). Сам реестр читается
+# ОБЫЧНЫМ авто-CRUD (/auto/call/search) — экран «Звонки» это стандартный
+# list/form, как у остальных моделей. Здесь остаётся только сводка
+# («Всего / Отвечено / Пропущено / Входящие»).
+#
+# Сводка считается по ТОМУ ЖЕ фильтру, что и таблица, но БЕЗ пагинации:
+# в таблице видна только страница, в плашках — все записи под фильтром.
+# Поэтому и формат фильтра тот же, что у /auto/call/search (FilterExpression),
+# а считаем через Model.search_count — с теми же проверками доступа.
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from starlette.status import HTTP_400_BAD_REQUEST
 
 from backend.base.crm.auth_token.app import AuthTokenApp
 
@@ -15,6 +25,9 @@ log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from backend.base.system.core.enviroment import Environment
+    from backend.base.system.dotorm.dotorm.components.filter_parser import (
+        FilterExpression,
+    )
 
 router_private = APIRouter(
     tags=["Telephony Calls"],
@@ -22,128 +35,69 @@ router_private = APIRouter(
 )
 
 
-def _build_filters(
-    direction: Optional[str],
-    disposition: Optional[str],
-    connector_id: Optional[int],
-    search: Optional[str],
-    date_from: Optional[str],
-    date_to: Optional[str],
-) -> tuple[list[str], list]:
-    where = ["c.active = true"]
-    params: list = []
-    if direction:
-        where.append("c.direction = %s")
-        params.append(direction)
-    if disposition:
-        where.append("c.disposition = %s")
-        params.append(disposition)
-    if connector_id:
-        where.append("c.connector_id = %s")
-        params.append(connector_id)
-    if date_from:
-        where.append("c.started_at >= %s")
-        params.append(date_from)
-    if date_to:
-        where.append("c.started_at <= %s")
-        params.append(date_to)
-    if search:
-        where.append(
-            "(c.number_from ILIKE %s OR c.number_to ILIKE %s "
-            "OR p.name ILIKE %s)"
+class CallsStatsPayload(BaseModel):
+    """Фильтр таблицы звонков (тот же FilterExpression, что у /search).
+
+    Тип объявлен как list: FilterExpression рекурсивный, и pydantic на нём
+    уходит в бесконечность при генерации схемы. Содержимое проверяет
+    _fields_belong_to_call.
+    """
+
+    filter: list | None = None
+
+
+def _fields_belong_to_call(expr: "FilterExpression", call_model) -> bool:
+    """Все триплеты фильтра — по полям звонка (как проверка fields в /search)."""
+    allowed = call_model.get_all_fields().keys()
+    for item in expr:
+        if isinstance(item, str):  # 'and' / 'or'
+            continue
+        if len(item) == 3 and isinstance(item[0], str):  # триплет
+            if item[0] not in allowed:
+                return False
+        elif not _fields_belong_to_call(item, call_model):  # вложенная группа
+            return False
+    return True
+
+
+@router_private.post("/telephony/calls/stats")
+async def get_calls_stats(req: Request, payload: CallsStatsPayload):
+    """Сводка по звонкам под текущим фильтром (без учёта пагинации).
+
+    Фильтр приходит от фронта ровно тот же, что уходит в /auto/call/search
+    (включая active=true самого вью), поэтому цифры плашек и содержимое
+    таблицы всегда об одной выборке.
+    """
+    env: "Environment" = req.app.state.env
+    call_model = env.models.call
+
+    base = payload.filter or []
+    if not _fields_belong_to_call(base, call_model):
+        return JSONResponse(
+            content={"error": "#FIELDS_NOT_FOUND"},
+            status_code=HTTP_400_BAD_REQUEST,
         )
-        like = f"%{search}%"
-        params.extend([like, like, like])
-    return where, params
 
+    # 1. Total (передаем None, если фильтр пустой)
+    total = await call_model.search_count(filter=base or None)
 
-@router_private.get("/telephony/calls")
-async def get_calls(
-    req: Request,
-    limit: int = 50,
-    offset: int = 0,
-    direction: Optional[str] = None,
-    disposition: Optional[str] = None,
-    connector_id: Optional[int] = None,
-    search: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-):
-    """Список звонков из реестра `call` (обогащён партнёром / коннектором / записью)."""
-    env: "Environment" = req.app.state.env
-    session = env.apps.db.get_session()
+    # 2. Answered
+    answered_filter = [base] if base else []
+    answered_filter.append(["disposition", "=", "answered"])
+    answered = await call_model.search_count(filter=answered_filter)
 
-    where, params = _build_filters(
-        direction, disposition, connector_id, search, date_from, date_to
-    )
-    where_sql = " AND ".join(where)
+    # 3. Incoming
+    incoming_filter = [base] if base else []
+    incoming_filter.append(["direction", "=", "incoming"])
+    incoming = await call_model.search_count(filter=incoming_filter)
 
-    query = f"""
-        SELECT
-            c.id,
-            c.direction        AS call_direction,
-            c.is_internal,
-            c.disposition      AS call_disposition,
-            c.duration         AS call_duration,
-            c.duration_talk    AS call_talk_duration,
-            c.started_at,
-            c.number_from,
-            c.number_to,
-            c.connector_id,
-            cc.type            AS connector_type,
-            cc.name            AS connector_name,
-            c.partner_id,
-            p.name             AS partner_name,
-            -- наша линия (endpoint/транк) и оператор
-            COALESCE(pn.extension, pn.number) AS line_number,
-            pn.name            AS line_name,
-            u.name             AS operator_name,
-            -- внешний контрагент = нога, противоположная нашей (по направлению)
-            CASE WHEN c.direction = 'incoming'
-                 THEN c.number_from ELSE c.number_to END AS client_number,
-            a.id               AS record_id,
-            c.lead_id
-        FROM "call" c
-        JOIN chat_connector cc ON cc.id = c.connector_id
-        LEFT JOIN partners p ON p.id = c.partner_id
-        LEFT JOIN phone_number pn ON pn.id = c.phone_number_id
-        LEFT JOIN users u ON u.id = pn.user_id
-        LEFT JOIN attachments a
-            ON a.res_model = 'call'
-            AND a.res_id = c.id
-            AND a.mimetype = 'audio/mpeg'
-        WHERE {where_sql}
-        ORDER BY c.started_at DESC NULLS LAST, c.id DESC
-        LIMIT %s OFFSET %s
-    """
-    params.extend([limit, offset])
-
-    rows = await session.execute(query, params)
-    return {"data": [dict(row) for row in rows]}
-
-
-@router_private.get("/telephony/calls/stats")
-async def get_calls_stats(
-    req: Request,
-    connector_id: Optional[int] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-):
-    """Аналитика: количество звонков по направлению и статусу."""
-    env: "Environment" = req.app.state.env
-    session = env.apps.db.get_session()
-
-    where, params = _build_filters(
-        None, None, connector_id, None, date_from, date_to
-    )
-    where_sql = " AND ".join(where)
-
-    query = f"""
-        SELECT c.direction AS direction, c.disposition AS disposition,
-               COUNT(*) AS cnt
-        FROM "call" c
-        WHERE {where_sql}
-        GROUP BY c.direction, c.disposition
-    """
-    rows = await session.execute(query, params)
-    return {"data": [dict(row) for row in rows]}
+    # Пропущенный = любой неотвеченный (no_answer/busy/failed/cancelled),
+    # исходящий = не входящий: считаем вычитанием, чтобы не гонять лишние
+    # COUNT-запросы.
+    return {
+        "total": total,
+        "answered": answered,
+        "missed": total - answered,
+        "incoming": incoming,
+        "outgoing": total - incoming,
+    }

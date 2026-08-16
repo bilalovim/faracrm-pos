@@ -5,9 +5,33 @@ Converts filter expressions to SQL WHERE clauses.
 Extracted to avoid code duplication in builders.
 """
 
+from datetime import datetime
 from typing import Any, Literal, Union
 
 from .dialect import Dialect
+
+
+def _parse_iso_datetime(value: Any) -> Any:
+    """Строка-дата → datetime; всё остальное возвращаем как есть.
+
+    Нужно потому, что в JSON типа «дата» нет: фильтр по Date/Datetime-полю
+    приезжает с фронта строкой ('2026-08-16' от ручного фильтра по дате,
+    '2026-08-15T21:00:00.000Z' от фильтров периода), а драйвер в параметр
+    DATE/TIMESTAMP-колонки строку не принимает — без приведения поиск падает
+    DataError'ом.
+
+    Без смещения считаем время локальным. Формат без дефисов ('20260816')
+    fromisoformat тоже понимает как дату — его отсекаем: это скорее
+    8-значный код в текстовом поле, чем дата.
+    """
+    if not isinstance(value, str) or "-" not in value:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    return parsed if parsed.tzinfo else parsed.astimezone()
+
 
 # Type definitions
 SQLOperator = Literal[
@@ -186,7 +210,7 @@ class FilterParser:
                 #     clause = f"({field} IS NULL OR {field} != %s)"
                 #     return clause, (value,)
                 clause = f"{field} {op} %s"
-                return clause, (value,)
+                return clause, (_parse_iso_datetime(value),)
 
             elif op == "is null":
                 return f"{field} IS NULL", ()

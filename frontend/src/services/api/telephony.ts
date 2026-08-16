@@ -1,72 +1,41 @@
 // Copyright 2025 FARA CRM
-// Telephony API — звонки и аналитика (экран «Звонки»).
+// Telephony API — сводка по звонкам для экрана «Звонки».
 //
-// Инжектим эндпоинты в общий crudApi (как chat.ts), чтобы не трогать store.
+// Сам реестр звонков читается обычным авто-CRUD (/auto/call/search) — экран
+// это стандартный list/form модели `call`. Здесь только аналитика, которую
+// нельзя посчитать по странице таблицы.
+//
+// Инжектим эндпоинт в общий crudApi (как chat.ts), чтобы не трогать store.
 
 import { crudApi } from './crudApi';
+import { FilterExpression } from './crudTypes';
 
-export type CallDisposition =
-  | 'answered'
-  | 'no_answer'
-  | 'busy'
-  | 'failed'
-  | 'cancelled';
-
-export interface CallRow {
-  id: number;
-  call_direction: 'incoming' | 'outgoing' | null;
-  is_internal: boolean;
-  call_disposition: CallDisposition | null;
-  call_duration: number | null;
-  call_talk_duration: number | null;
-  /** Время начала звонка (ISO) */
-  started_at: string | null;
-  number_from: string | null;
-  number_to: string | null;
-  connector_id: number;
-  connector_type: string;
-  connector_name: string;
-  partner_id: number | null;
-  partner_name: string | null;
-  /** Наша линия (extension/номер) и её оператор */
-  line_number: string | null;
-  line_name: string | null;
-  operator_name: string | null;
-  /** Внешний контрагент (нога, противоположная нашей линии) */
-  client_number: string | null;
-  record_id: number | null;
-  lead_id: number | null;
+export interface CallsStatsParams {
+  /** Фильтр таблицы (тот же, что уходит в /auto/call/search). */
+  filter?: FilterExpression;
 }
 
-export interface CallStatRow {
-  direction: string | null;
-  disposition: string | null;
-  cnt: number;
-}
-
-export interface CallsParams {
-  limit?: number;
-  offset?: number;
-  direction?: string;
-  disposition?: string;
-  connector_id?: number;
-  search?: string;
-  date_from?: string;
-  date_to?: string;
+export interface CallsStats {
+  total: number;
+  answered: number;
+  missed: number;
+  incoming: number;
+  outgoing: number;
 }
 
 const telephonyApi = crudApi.injectEndpoints({
   endpoints: build => ({
-    getCalls: build.query<{ data: CallRow[] }, CallsParams>({
-      query: params => ({ url: 'telephony/calls', params }),
-    }),
-    getCallsStats: build.query<
-      { data: CallStatRow[] },
-      Omit<CallsParams, 'limit' | 'offset' | 'direction' | 'disposition' | 'search'>
-    >({
-      query: params => ({ url: 'telephony/calls/stats', params }),
+    getCallsStats: build.query<CallsStats, CallsStatsParams>({
+      query: ({ filter }) => ({
+        method: 'POST',
+        url: 'telephony/calls/stats',
+        body: { filter },
+      }),
+      // Сводка обязана меняться вместе с таблицей: правка/создание звонка
+      // инвалидирует список модели — тем же тегом инвалидируется и она.
+      providesTags: [{ type: 'call', id: 'LIST' }],
     }),
   }),
 });
 
-export const { useGetCallsQuery, useGetCallsStatsQuery } = telephonyApi;
+export const { useGetCallsStatsQuery } = telephonyApi;

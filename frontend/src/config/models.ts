@@ -110,6 +110,21 @@ export const modelsConfig: Record<string, ModelConfig> = {
       })),
   },
 
+  // Реестр звонков (экран «Звонки»): обычный список/форма модели call.
+  // Фильтры периода («Сегодня» по умолчанию) лежат в saved_filters — их
+  // сидит ChatPhoneApp, вью про них ничего не знает.
+  call: {
+    menu: MenuGroups.communication,
+    list: () =>
+      import('@/fara_telephony/CallViews').then(m => ({
+        default: m.ViewListCall,
+      })),
+    form: () =>
+      import('@/fara_telephony/CallViews').then(m => ({
+        default: m.ViewFormCall,
+      })),
+  },
+
   // Журнал телефонии Asterisk (экран «События»): ARI-события + чтения CDR.
   // Только просмотр, наполняется бэком.
   asterisk_log: {

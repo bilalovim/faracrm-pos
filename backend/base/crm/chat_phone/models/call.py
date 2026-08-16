@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from backend.base.crm.partners.models.partners import Partner
     from backend.base.crm.leads.models.leads import Lead
     from backend.base.crm.chat_phone.models.phone_number import PhoneNumber
+    from backend.base.crm.attachments.models.attachments import Attachment
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,15 @@ class Call(AuditMixin, DotModel):
         relation_table=lambda: env.models.lead,
         ondelete="set null",
         description="Лид",
+    )
+
+    # Запись разговора всегда одна — держим ссылкой (её ставит
+    # _save_recording), чтобы колонка «Запись» в обычном списке получала id
+    # вложения без отдельного запроса.
+    record_id: "Attachment" = Many2one(
+        relation_table=lambda: env.models.attachment,
+        ondelete="set null",
+        description="Запись разговора",
     )
 
     raw: str | None = Text(description="Сырой CDR")
@@ -234,6 +244,13 @@ class Call(AuditMixin, DotModel):
         return result
 
     @staticmethod
+    async def _link_record(env, call_id: int, attachment_id: int) -> None:
+        """Проставить звонку ссылку на запись (идемпотентно)."""
+        Call = env.models.call
+        attachment = env.models.attachment(id=attachment_id)
+        await Call(id=call_id).update(Call(record_id=attachment))
+
+    @staticmethod
     async def _save_recording(
         env, connector, adapter, strategy, call_id
     ) -> None:
@@ -255,6 +272,9 @@ class Call(AuditMixin, DotModel):
             limit=1,
         )
         if existing:
+            # Вложение уже есть — только дотягиваем ссылку (звонки, записанные
+            # до появления record_id, иначе остались бы без кнопки «Запись»).
+            await Call._link_record(env, call_id, existing[0].id)
             return
         try:
             content = await strategy._download_call_record(connector, adapter)
@@ -275,7 +295,10 @@ class Call(AuditMixin, DotModel):
                 is_voice=True,
                 content=content,
             )
-            await env.models.attachment.create(payload=attachment)
+            attachment_id = await env.models.attachment.create(
+                payload=attachment
+            )
+            await Call._link_record(env, call_id, attachment_id)
             logger.info(
                 "[call %s] запись %r сохранена (%d байт)",
                 call_id,

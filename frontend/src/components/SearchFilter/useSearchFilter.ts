@@ -32,12 +32,49 @@ const STORAGE_KEY_PREFIX = 'searchFilters_recent_';
 const PLACEHOLDER_USER_ID = '{{user_id}}';
 
 /**
+ * Начала периодов — для фильтров «Сегодня / Эта неделя / …» (они хранятся
+ * в БД, см. ChatPhoneApp._init_call_period_filters). Считаются в момент
+ * применения фильтра, поэтому запись в БД не устаревает.
+ */
+const PLACEHOLDER_PERIODS = new Map<string, () => Date>([
+  ['{{today}}', () => new Date(new Date().setHours(0, 0, 0, 0))],
+  [
+    '{{week_start}}',
+    () => {
+      const d = new Date(new Date().setHours(0, 0, 0, 0));
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // неделя с понедельника
+      return d;
+    },
+  ],
+  [
+    '{{month_start}}',
+    () => {
+      const n = new Date();
+      return new Date(n.getFullYear(), n.getMonth(), 1);
+    },
+  ],
+  [
+    '{{quarter_start}}',
+    () => {
+      const n = new Date();
+      return new Date(n.getFullYear(), Math.floor(n.getMonth() / 3) * 3, 1);
+    },
+  ],
+  ['{{year_start}}', () => new Date(new Date().getFullYear(), 0, 1)],
+]);
+
+/**
  * Подмена плейсхолдера в значении одного триплета. Шаблоны в field/operator
  * не поддерживаются — там только literal-имена и literal-операторы.
  */
 function resolvePlaceholder(value: any, userId: number | undefined): any {
-  if (value !== PLACEHOLDER_USER_ID) return value;
-  return userId ?? value; // нет сессии — оставляем как есть, увидим в UI
+  if (value === PLACEHOLDER_USER_ID) {
+    return userId ?? value; // нет сессии — оставляем как есть, увидим в UI
+  }
+  const period = PLACEHOLDER_PERIODS.get(value);
+  // toISOString даёт UTC-момент — граница периода не поедет, даже если
+  // сервер в другом часовом поясе.
+  return period ? period().toISOString() : value;
 }
 
 interface UseSearchFilterOptions {

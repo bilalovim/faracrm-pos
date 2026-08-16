@@ -199,7 +199,7 @@ const menuTree: GroupConfig[] = [
     submenus: [
       {
         id: 'menu_calls',
-        to: '/calls',
+        to: '/call',
         label: 'Звонки',
         labelKey: 'common:menu.calls',
       },

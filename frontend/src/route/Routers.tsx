@@ -13,9 +13,6 @@ import type { RootState } from '@/store/store';
 // старый экран на переходе (см. комментарий у FaraRouters).
 const ChatPageComponent = lazy(() => import('@/fara_chat/components/ChatPage'));
 
-// Экран «Звонки» (реестр call-сообщений телефонии) — кастомная страница.
-const CallsPage = lazy(() => import('@/fara_telephony/CallsPage'));
-
 // Wrapper для ChatPage с props из Redux
 const ChatPage = () => {
   const session = useSelector((state: RootState) => state.auth.session);
@@ -150,7 +147,6 @@ const FaraRouters = () => {
 
           {/* Кастомные страницы */}
           <Route path="chat/*" element={<ChatPage />} />
-          <Route path="calls" element={<CallsPage />} />
 
           {/* Все остальные роуты - модели */}
           <Route path="*" element={<ModelRoutes />} />
