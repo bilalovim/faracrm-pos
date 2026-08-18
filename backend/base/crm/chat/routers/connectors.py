@@ -10,7 +10,7 @@
 
 from typing import TYPE_CHECKING, Literal
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import AwareDatetime
 
 from backend.base.crm.auth_token.app import AuthTokenApp
@@ -168,10 +168,20 @@ async def fetch_connector_history(
     """
     env: "Environment" = req.app.state.env
 
-    connector = await env.models.chat_connector.get(connector_id)
+    # Импорт гоняет записи через тот же пайплайн, что и webhook, поэтому и
+    # коннектор грузим как webhook-роутер: с ВЛОЖЕННЫМ contact_type_id. Через
+    # .get() many2one приходит голым id, и резолв клиента падает на
+    # contact_type.id — внутренние звонки при этом пишутся, а клиентские нет.
+    connectors = await env.models.chat_connector.search(
+        filter=[("id", "=", connector_id)],
+        fields_nested={"contact_type_id": ["id", "name", "is_phone_format"]},
+        limit=1,
+    )
+    if not connectors:
+        raise HTTPException(status_code=404, detail="CONNECTOR_NOT_FOUND")
 
-    result = await connector.strategy.import_history(
-        connector, start, end, env, mode=mode
+    result = await connectors[0].strategy.import_history(
+        connectors[0], start, end, env, mode=mode
     )
     return {"data": result}
 
