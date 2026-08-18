@@ -1,6 +1,8 @@
 # Copyright 2025 FARA CRM
 # Chat Phone MegaFon module - MegaFon VATS webhook adapter
 
+from datetime import datetime, timezone
+
 from backend.base.crm.chat_phone.strategies.adapter import PhoneMessageAdapter
 
 
@@ -135,14 +137,31 @@ class MegafonPhoneAdapter(PhoneMessageAdapter):
         return mapping.get(status, "failed")
 
     @property
+    def _our_number(self) -> str:
+        """
+        Наша нога разговора: extension оператора (по нему звонок привязывается
+        к сотруднику), иначе линия ВАТС — diversion / telnum.
+        """
+        return (
+            self.raw.get("ext")
+            or self.raw.get("diversion")
+            or self.raw.get("telnum")
+            or ""
+        )
+
+    @property
     def caller_number(self) -> str:
-        """Номер клиента."""
-        return self.raw.get("phone", "")
+        """Кто звонил: входящий — клиент, исходящий — наша линия."""
+        if self.call_direction == "incoming":
+            return self.raw.get("phone", "")
+        return self._our_number
 
     @property
     def callee_number(self) -> str:
-        """Номер назначения (наш номер / diversion)."""
-        return self.raw.get("diversion") or self.raw.get("telnum", "")
+        """Кому звонили: входящий — наша линия, исходящий — клиент."""
+        if self.call_direction == "incoming":
+            return self._our_number
+        return self.raw.get("phone", "")
 
     @property
     def internal_number(self) -> str | None:
@@ -160,26 +179,32 @@ class MegafonPhoneAdapter(PhoneMessageAdapter):
         return self.author_id
 
     @property
-    def author_name(self) -> str | None:
-        """Имя — номер телефона клиента."""
-        return self.caller_number or None
-
-    @property
     def created_at(self) -> int:
         """
-        Unix timestamp создания.
-        MegaFon history: start в формате '20260323T085626Z'.
-        MegaFon event: нет timestamp — используем текущее время.
+        Unix timestamp начала звонка.
+
+        history: поле start в формате '20260323T085626Z' — суффикс Z означает
+        UTC, поэтому зону проставляем ЯВНО. Без tzinfo объект наивный, и
+        .timestamp() прочитал бы его в зоне процесса — время звонка уезжало бы
+        на разницу с UTC.
+
+        event: поля start в команде нет. Событие «завершён» приходит сразу по
+        окончании разговора, поэтому берём текущее время: иначе звонок пишется
+        вообще без времени и выпадает из фильтров периода на экране «Звонки».
+        Точное значение приедет следом с командой history (upsert по callid).
         """
         start_str = self.raw.get("start")
         if start_str:
             try:
-                from datetime import datetime
-
-                dt = datetime.strptime(start_str, "%Y%m%dT%H%M%SZ")
-                return int(dt.timestamp())
+                return int(
+                    datetime.strptime(start_str, "%Y%m%dT%H%M%SZ")
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
             except (ValueError, TypeError):
                 pass
+        if self.cmd == "event":
+            return int(datetime.now(timezone.utc).timestamp())
         return 0
 
     @property

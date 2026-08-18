@@ -34,6 +34,8 @@ export const connectorColors: Record<string, string> = {
   max_business: 'grape',
   vk: 'indigo',
   phone_asterisk: 'teal',
+  phone_sipuni: 'teal',
+  phone_megafon: 'teal',
 };
 
 /**
@@ -60,6 +62,8 @@ export function connectorIcon(
     case 'vk':
       return <VkIcon size={size} />;
     case 'phone_asterisk':
+    case 'phone_sipuni':
+    case 'phone_megafon':
       return <IconPhoneCall size={size} />;
     default:
       return <IconMessage size={size} />;

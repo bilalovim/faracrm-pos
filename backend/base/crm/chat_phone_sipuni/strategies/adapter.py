@@ -127,8 +127,18 @@ class SipuniPhoneAdapter(PhoneMessageAdapter):
 
     @property
     def created_at(self) -> int:
-        """Unix timestamp события."""
-        return int(self.raw.get("timestamp", 0))
+        """
+        Unix timestamp НАЧАЛА звонка — именно он идёт в started_at записи.
+
+        У завершающего события (event=2) поле timestamp — это момент САМОГО
+        события, то есть конец разговора; начало лежит в call_start_timestamp.
+        Берём его, иначе звонок в реестре датируется временем окончания.
+        """
+        return int(
+            self.raw.get("call_start_timestamp")
+            or self.raw.get("timestamp")
+            or 0
+        )
 
     @property
     def call_duration(self) -> int | None:
@@ -174,16 +184,18 @@ class SipuniPhoneAdapter(PhoneMessageAdapter):
     @property
     def call_record_url(self) -> str | None:
         """
-        URL записи разговора.
+        Запись разговора: прямая ссылка (webhook) или маркер наличия записи
+        (выгрузка истории ссылок не содержит — файл тянется по id через API,
+        см. SipuniPhoneStrategy._download_call_record).
 
-        Доступен только при event=2 и status=ANSWER.
+        Есть только у завершённого отвеченного звонка.
         """
-        if (
-            self.raw.get("event") == 2
-            and self.raw.get("status") == "ANSWER"
-            and self.raw.get("call_record_link")
-        ):
+        if self.raw.get("event") != 2 or self.raw.get("status") != "ANSWER":
+            return None
+        if self.raw.get("call_record_link"):
             return self.raw.get("call_record_link")
+        if self.raw.get("has_record"):
+            return f"sipuni:record:{self.message_id}"
         return None
 
     @property

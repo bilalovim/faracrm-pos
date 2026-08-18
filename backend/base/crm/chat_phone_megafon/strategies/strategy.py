@@ -2,6 +2,7 @@
 # Chat Phone MegaFon module - MegaFon VATS strategy
 
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Tuple
 
 import httpx
@@ -27,7 +28,7 @@ class MegafonPhoneStrategy(PhoneStrategyBase):
 
     Webhook (входящие от MegaFon → FARA):
     - Один URL для всех команд: /chat/webhook/{hash}/{connector_id}
-    - Аутентификация: crm_token в теле POST (сравнивается с vpbx_api_key)
+      (секрет — webhook_hash в самом URL, как у остальных коннекторов)
     - Команды: history, event, contact, rating
 
     Поддерживает:
@@ -40,7 +41,6 @@ class MegafonPhoneStrategy(PhoneStrategyBase):
     Настройка полей ChatConnector:
     - connector_url: https://{domain}/crmapi/v1
     - access_token: API ключ (X-API-KEY для исходящих запросов)
-    - vpbx_api_key: CRM токен (для валидации входящих webhook)
     """
 
     strategy_type = "phone_megafon"
@@ -153,23 +153,6 @@ class MegafonPhoneStrategy(PhoneStrategyBase):
         return MegafonPhoneAdapter(connector, raw_message)
 
     # ========================================================================
-    # Валидация webhook
-    # ========================================================================
-
-    def validate_webhook_token(
-        self, connector: "ChatConnector", payload: dict
-    ) -> bool:
-        """
-        Проверить crm_token во входящем webhook.
-
-        MegaFon отправляет crm_token в теле каждого POST запроса.
-        Сравниваем с vpbx_api_key на коннекторе.
-        """
-        crm_token = payload.get("crm_token", "")
-        expected = connector.vpbx_api_key or ""
-        return crm_token == expected
-
-    # ========================================================================
     # MegaFon REST API — авторизованные запросы
     # ========================================================================
 
@@ -261,25 +244,21 @@ class MegafonPhoneStrategy(PhoneStrategyBase):
     async def fetch_call_history(
         self,
         connector: "ChatConnector",
-        date_from: str,
-        date_to: str,
+        start_date: datetime,
+        end_date: datetime,
     ) -> list[dict]:
         """
         Получить историю звонков через MegaFon API.
 
         GET /crmapi/v1/history/json?start={from}&end={to}&type=all
 
-        Args:
-            connector: Коннектор
-            date_from: Дата начала (формат: 20260101T000000Z)
-            date_to: Дата конца (формат: 20260131T235959Z)
-
-        Returns:
-            Список звонков (dict)
+        Записи истории — та же форма, что у webhook-команды `history`, поэтому
+        помечаем их cmd='history' и отдаём как есть: разбирает тот же адаптер.
+        Даты MegaFon принимает в UTC-формате 20260101T000000Z.
         """
         params = {
-            "start": date_from,
-            "end": date_to,
+            "start": f"{start_date.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}",
+            "end": f"{end_date.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}",
             "type": "all",
             "limit": 1000,
         }
@@ -287,11 +266,11 @@ class MegafonPhoneStrategy(PhoneStrategyBase):
             connector, "/history/json", params=params
         )
 
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict) and "items" in result:
-            return result["items"]
-        return []
+        if isinstance(result, dict):
+            result = result.get("items") or []
+        if not isinstance(result, list):
+            return []
+        return [{**row, "cmd": "history"} for row in result]
 
     async def fetch_users(self, connector: "ChatConnector") -> list[dict]:
         """
@@ -308,6 +287,52 @@ class MegafonPhoneStrategy(PhoneStrategyBase):
         if isinstance(result, dict) and "items" in result:
             return result["items"]
         return []
+
+    async def fetch_numbers(self, connector: "ChatConnector") -> list[dict]:
+        """
+        Линии MegaFon ВАТС: extension'ы операторов (из /users) и сами номера
+        ВАТС (telnum) как транки.
+
+        Extension — «наша нога» разговора, по нему матчится sip-контакт
+        сотрудника; telnum — линия, на которую приходит входящий (diversion),
+        она общая для нескольких операторов, поэтому заводится один раз и без
+        привязки к сотруднику.
+        """
+        users = await self.fetch_users(connector)
+
+        records: list[dict] = []
+        trunks: set[str] = set()
+        for rec in users:
+            login = str(rec.get("login") or "").strip()
+            ext = str(rec.get("ext") or "").strip()
+            telnum = str(rec.get("telnum") or "").strip()
+
+            if ext:
+                records.append(
+                    {
+                        "external_id": f"ext:{ext}",
+                        "kind": "number",
+                        "number": ext,
+                        "extension": ext,
+                        "name": rec.get("name") or login or ext,
+                        "user_key": ext,
+                        "raw": rec,
+                    }
+                )
+            if telnum and telnum not in trunks:
+                trunks.add(telnum)
+                records.append(
+                    {
+                        "external_id": f"line:{telnum}",
+                        "kind": "trunk",
+                        "number": telnum,
+                        "extension": None,
+                        "name": telnum,
+                        "user_key": None,
+                        "raw": {"telnum": telnum},
+                    }
+                )
+        return records
 
     async def make_call(
         self,

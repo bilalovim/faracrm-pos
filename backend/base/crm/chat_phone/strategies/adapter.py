@@ -6,6 +6,13 @@ from datetime import datetime, timezone
 from backend.base.crm.chat.strategies.adapter import ChatMessageAdapter
 
 
+def digits_only(value: str | None) -> str:
+    """Только цифры из строки номера."""
+    if not value:
+        return ""
+    return "".join(ch for ch in value if ch.isdigit())
+
+
 class PhoneMessageAdapter(ChatMessageAdapter):
     """
     Базовый адаптер для парсинга событий звонков от телефонных провайдеров.
@@ -38,12 +45,39 @@ class PhoneMessageAdapter(ChatMessageAdapter):
     @property
     def call_direction(self) -> str:
         """
-        Направление звонка.
+        Направление звонка ПО ДАННЫМ ПРОВАЙДЕРА (для живого попапа: с какой ноги
+        клиент). Итоговое направление звонка в реестре считает пайплайн от НАШИХ
+        линий (phone_number), см. IncomingCallPipeline._resolve_legs.
 
         Returns:
-            'incoming' или 'outgoing'
+            'incoming', 'outgoing' или 'internal' (сотрудник↔сотрудник, клиента
+            нет — попап по такому звонку не шлём)
         """
         raise NotImplementedError()
+
+    @staticmethod
+    def normalize_phone(number: str | None) -> str:
+        """
+        Канонизация номера клиента → E.164 (как Contact._canonicalize), чтобы
+        ключ чата и матчинг совпадали с хранимыми контактами.
+
+        phonenumbers (libphonenumber), регион по умолчанию RU. Невалидные как
+        телефон — как цифры (fallback, в т.ч. если библиотека недоступна).
+        """
+        if not number:
+            return ""
+        v = number.strip()
+        try:
+            import phonenumbers
+
+            parsed = phonenumbers.parse(v, "RU")
+            if phonenumbers.is_valid_number(parsed):
+                return phonenumbers.format_number(
+                    parsed, phonenumbers.PhoneNumberFormat.E164
+                )
+        except Exception:
+            pass
+        return digits_only(v)
 
     @property
     def disposition(self) -> str:

@@ -1,11 +1,11 @@
 # Copyright 2025 FARA CRM
 # Chat Phone Sipuni module - connector mixin
 
-import secrets
 from typing import TYPE_CHECKING
 
 from backend.base.system.core.extensions import extend
 from backend.base.crm.chat.models.chat_connector import ChatConnector
+from backend.base.crm.chat_phone.connector import phone_connector_defaults
 from backend.base.system.dotorm.dotorm.decorators import onchange
 from backend.base.system.dotorm.dotorm.fields import Selection
 
@@ -31,10 +31,8 @@ class ChatConnectorSipuniMixin(_Base):
     async def onchange_type_phone_sipuni(self) -> dict:
         """Установить дефолтные значения при выборе типа phone_sipuni."""
         if self.type == "phone_sipuni":
-            webhook_hash = secrets.token_hex(32)
             return {
+                **await phone_connector_defaults(),
                 "connector_url": self.DEFAULT_CONNECTOR_URL_SIPUNI,
-                "webhook_hash": webhook_hash,
-                "category": "phone",
             }
         return {}

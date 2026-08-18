@@ -1,7 +1,8 @@
 # Copyright 2025 FARA CRM
-# Chat Phone module - base phone strategy
+# Chat Phone module - abstract phone strategy
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Tuple
 
 from backend.base.crm.chat.strategies.strategy import ChatStrategyBase
@@ -14,72 +15,93 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Лидогенерация при импорте истории. Карточку импорт не трогает НИКОГДА:
+# у исторических записей событие всегда «завершён», то есть карточка умела бы
+# только гаснуть — и погасила бы попап текущего разговора с тем же номером.
+LEAD_ON_IMPORT = {"normal": True, "no_notify": True, "silent": False}
+
 
 class PhoneStrategyBase(ChatStrategyBase):
     """
-    Базовая стратегия телефонных коннекторов.
+    АБСТРАКТНАЯ стратегия телефонного коннектора: только контракт провайдера.
 
-    Звонок — САМОСТОЯТЕЛЬНАЯ сущность (модель call), а НЕ сообщение. handle_webhook
-    парсит CDR адаптером и прогоняет через IncomingCallPipeline (наследник
-    message-пайплайна: reuse резолва клиент→партнёр→лид, но пишет строку call
-    upsert-ом по uniqueid, без чата/сообщения). Экран «Звонки» читает call
-    напрямую; в историю чата звонки подмешиваются на чтении (call_external).
+    Стратегия — ТРАНСПОРТ: разобрать формат провайдера и сходить в его API.
+    Решения по событию звонка (карточка, запись в реестр) принимает
+    IncomingCallPipeline, реестр номеров ведёт модель PhoneNumber, фоновые
+    задачи — chat_phone/cron.py.
 
-    Провайдеры (Sipuni, MegaFon, Asterisk) реализуют:
-    - create_message_adapter() — парсинг формата провайдера (PhoneMessageAdapter);
-    - get_or_generate_token() / set_webhook() / unset_webhook();
-    - _download_call_record() — скачивание записи (опционально, дефолт по URL);
-    - chat_send_message() — инициация исходящего звонка (опционально).
-
-    Событие звонка (ringing/answered/ended) определяется адаптером (event_type).
+    Конкретные стратегии: AsteriskPhoneStrategy (эталон, проверен в бою),
+    SipuniPhoneStrategy, MegafonPhoneStrategy.
     """
 
     # Телефонии outbox-аккаунт не нужен; запись качаем сами (content).
     requires_outbox_account = False
     attachments_source = "content"
 
-    async def handle_webhook(
+    # Окно бэкофилла истории для cron: [now-WAIT-WINDOW, now-WAIT]. WAIT — фора
+    # провайдеру на запись звонка в свою историю.
+    HISTORY_WINDOW_MINUTES = 60
+    HISTORY_WAIT_MINUTES = 1
+
+    # ==================== контракт провайдера ====================
+
+    async def fetch_numbers(self, connector: "ChatConnector") -> list[dict]:
+        """
+        Линии провайдера в УНИФИЦИРОВАННОМ виде (по одной на запись):
+
+            {
+              "external_id": "SIP/301",     # ключ upsert-а (с connector_id)
+              "kind": "number",             # number / trunk / group / queue
+              "number": "301",              # набираемый номер / линия
+              "extension": "301",           # внутренний номер
+              "name": "Отдел продаж",       # человекочитаемое имя
+              "user_key": "301",            # чем искать контакт сотрудника
+              "raw": {...},                 # сырая запись провайдера
+            }
+        """
+        raise NotImplementedError(
+            f"fetch_numbers not implemented for {self.strategy_type}"
+        )
+
+    async def fetch_call_history(
         self,
         connector: "ChatConnector",
-        payload: dict,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> list[dict]:
+        """
+        История звонков за окно [start_date, end_date] (tz-aware datetime;
+        формат под API выбирает провайдер). Записи — в том же виде, что и
+        webhook-события: их разбирает тот же адаптер.
+        """
+        raise NotImplementedError(
+            f"fetch_call_history not implemented for {self.strategy_type}"
+        )
+
+    async def final_call_records(
+        self,
+        connector: "ChatConnector",
         env: "Environment",
-        notify: bool = True,
-        generate_lead: bool = True,
-    ) -> Any:
+        adapter: "PhoneMessageAdapter",
+    ) -> list[dict] | None:
         """
-        Один webhook-эвент звонка → расширенный пайплайн.
-
-        Дедуп по message_id НЕ делаем (в отличие от мессенджеров): у звонка
-        несколько событий с ОДНИМ call_id, и пайплайн сам решает create/update.
-
-        notify/generate_lead прокидываем в пайплайн: импорт истории из CDR может
-        отключить живой попап и/или лидогенерацию (по умолчанию — обычный режим).
+        Записи с полными данными звонка для завершающего события; None —
+        событие самодостаточно (обычный случай). Asterisk переопределяет:
+        ARI-хэнгап данных о звонке не несёт, они лежат в CDR.
         """
-        try:
-            adapter: "PhoneMessageAdapter" = self.create_message_adapter(
-                connector, payload
-            )  # type: ignore
-            if adapter.should_skip:
-                return {"ok": True}
-            # Адаптер подгружает номера сотрудников (для резолва внутр./клиент).
-            await adapter.cache_numbers(env)
-            # Звонок пишется в НЕЗАВИСИМУЮ таблицу call (не chat_message) через
-            # call-пайплайн: reuse резолва клиент→партнёр→лид из message-пайплайна.
-            from .pipeline_incoming_call import IncomingCallPipeline
+        return None
 
-            async with env.apps.db.get_transaction():
-                await IncomingCallPipeline(
-                    self, env, connector, adapter, generate_lead=generate_lead
-                ).run()
-            return {"ok": True}
-        except Exception as e:  # noqa: BLE001
-            logger.error(
-                "[%s] phone webhook error: %s",
-                self.strategy_type,
-                e,
-                exc_info=True,
-            )
-            return {"ok": True}
+    async def log_event(
+        self,
+        connector: "ChatConnector",
+        env: "Environment",
+        adapter: "PhoneMessageAdapter",
+    ) -> None:
+        """
+        Журнал событий провайдера. По умолчанию молчим; Asterisk пишет
+        ARI-события в свой журнал телефонии (экран «События»).
+        """
+        return None
 
     async def _download_call_record(
         self,
@@ -108,3 +130,127 @@ class PhoneStrategyBase(ChatStrategyBase):
         raise NotImplementedError(
             f"Outgoing calls not supported for {self.strategy_type}"
         )
+
+    # ==================== точки входа ====================
+
+    async def _run_call_pipeline(
+        self,
+        connector: "ChatConnector",
+        payload: dict,
+        env: "Environment",
+        notify_card: bool = True,
+        generate_lead: bool = True,
+    ) -> None:
+        """Одно событие звонка → пайплайн. Исключения НЕ глушим — они нужны
+        импорту, чтобы честно посчитать неудачные записи."""
+        adapter: "PhoneMessageAdapter" = self.create_message_adapter(
+            connector, payload
+        )  # type: ignore
+        if adapter.should_skip:
+            return
+
+        from .pipeline_incoming_call import IncomingCallPipeline
+
+        await IncomingCallPipeline(
+            self,
+            env,
+            connector,
+            adapter,
+            notify_card=notify_card,
+            generate_lead=generate_lead,
+        ).run()
+
+    async def handle_webhook(
+        self,
+        connector: "ChatConnector",
+        payload: dict,
+        env: "Environment",
+        notify: bool = True,
+        generate_lead: bool = True,
+    ) -> Any:
+        """Событие звонка от провайдера → пайплайн (он и решает, что делать)."""
+        try:
+            await self._run_call_pipeline(
+                connector, payload, env, notify, generate_lead
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "[%s] phone webhook error: %s",
+                self.strategy_type,
+                e,
+                exc_info=True,
+            )
+        # Провайдеру всегда 200: иначе он уйдёт в ретраи по нашей внутренней
+        # ошибке, а событие звонка повторить всё равно нечем.
+        return {"ok": True}
+
+    async def test_connection(self, connector: "ChatConnector") -> dict:
+        """Кнопка «Проверить соединение»: пинг списка номеров провайдера."""
+        try:
+            numbers = await self.fetch_numbers(connector)
+            return {
+                "ok": True,
+                "message": f"Соединение установлено. Номеров: {len(numbers)}",
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "message": f"Ошибка соединения: {e}"}
+
+    async def sync_numbers(
+        self, connector: "ChatConnector", env: "Environment"
+    ) -> dict:
+        """Кнопка «Синхронизировать номера»: линии провайдера → реестр номеров."""
+        records = await self.fetch_numbers(connector)
+        return await env.models.phone_number.sync_from_provider(
+            env, connector, records
+        )
+
+    async def import_history(
+        self,
+        connector: "ChatConnector",
+        start_date: datetime,
+        end_date: datetime,
+        env: "Environment",
+        mode: str = "silent",
+    ) -> dict:
+        """
+        Импорт истории звонков за период (кнопка «Прочитать историю» и cron).
+        Повторный импорт безопасен — звонок пишется upsert-ом по uniqueid.
+
+        mode задаёт только лидогенерацию: normal / no_notify — с лидом,
+        silent (по умолчанию) — без. Карточку импорт не показывает и не гасит.
+        """
+        generate_lead = LEAD_ON_IMPORT.get(mode, False)
+        calls = await self.fetch_call_history(connector, start_date, end_date)
+        imported = 0
+        failed = 0
+        for call in calls:
+            try:
+                await self._run_call_pipeline(
+                    connector,
+                    call,
+                    env,
+                    notify_card=False,
+                    generate_lead=generate_lead,
+                )
+                imported += 1
+            except Exception as e:  # noqa: BLE001
+                failed += 1
+                logger.error(
+                    "[%s] import history failed: %s",
+                    self.strategy_type,
+                    e,
+                    exc_info=True,
+                )
+        message = (
+            f"Импортировано звонков: {imported} (из {len(calls)} записей "
+            f"за период, режим «{mode}»)"
+        )
+        if failed:
+            message += f", с ошибками: {failed}"
+        return {
+            "ok": True,
+            "imported": imported,
+            "failed": failed,
+            "total": len(calls),
+            "message": message,
+        }

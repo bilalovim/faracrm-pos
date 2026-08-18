@@ -154,17 +154,17 @@ async def fetch_connector_history(
     mode: Literal["normal", "no_notify", "silent"] = Body("silent"),
 ):
     """
-    Прочитать историю звонков из CDR за период [start, end] и импортировать
-    (создать call-сообщения). start/end — timezone-aware даты (валидируются
-    Pydantic; из фронта уходят как ISO-строки с зоной).
+    Прочитать историю звонков у провайдера за период [start, end] и записать в
+    реестр звонков. start/end — timezone-aware даты (валидируются Pydantic; из
+    фронта уходят как ISO-строки с зоной).
 
     mode — как обрабатывать исторические звонки (по умолчанию silent):
     normal (как живой звонок: попап + лид) / no_notify (без попапа) /
-    silent (без попапа и без лида — только сообщение).
+    silent (без попапа и без лида — только запись звонка).
 
-    Для Asterisk: тянет CDR через источник и прогоняет каждую запись через
-    пайплайн. Для типов без поддержки — ok=false (см. базовый
-    ChatStrategyBase.import_history).
+    Телефонные стратегии тянут историю у провайдера и прогоняют каждую запись
+    через тот же пайплайн, что и webhook. Для типов без поддержки — ok=false
+    (см. базовый ChatStrategyBase.import_history).
     """
     env: "Environment" = req.app.state.env
 
@@ -173,33 +173,6 @@ async def fetch_connector_history(
     result = await connector.strategy.import_history(
         connector, start, end, env, mode=mode
     )
-    return {"data": result}
-
-
-@router_private.post("/connectors/{connector_id}/listener/start")
-async def start_connector_listener(req: Request, connector_id: int):
-    """
-    Включить постоянный in-process слушатель событий (Asterisk ARI, local-режим).
-
-    Проверяет соединение и, только если прошло, поднимает слушатель + ставит флаг
-    автозапуска. Возвращает {"ok", "enabled", "message"}.
-    """
-    env: "Environment" = req.app.state.env
-
-    connector = await env.models.chat_connector.get(connector_id)
-
-    result = await connector.strategy.set_listener(connector, True, env)
-    return {"data": result}
-
-
-@router_private.post("/connectors/{connector_id}/listener/stop")
-async def stop_connector_listener(req: Request, connector_id: int):
-    """Выключить постоянный слушатель событий (снимает флаг автозапуска)."""
-    env: "Environment" = req.app.state.env
-
-    connector = await env.models.chat_connector.get(connector_id)
-
-    result = await connector.strategy.set_listener(connector, False, env)
     return {"data": result}
 
 

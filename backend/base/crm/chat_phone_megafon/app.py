@@ -1,7 +1,13 @@
 # Copyright 2025 FARA CRM
 # Chat Phone MegaFon module - application configuration
 
+from typing import TYPE_CHECKING
+
 from backend.base.system.core.app import App
+from backend.base.crm.chat_phone.app import register_phone_crons
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 
 class ChatPhoneMegafonApp(App):
@@ -17,7 +23,6 @@ class ChatPhoneMegafonApp(App):
     - Base URL: https://{domain}/crmapi/v1/
     - Auth: X-API-KEY header
     - Webhooks: POST с полем 'cmd' (history/event/contact/rating)
-    - Auth webhook: crm_token в теле запроса
 
     Webhook команды:
     - history: завершённый звонок с записью
@@ -28,7 +33,6 @@ class ChatPhoneMegafonApp(App):
     Настройка коннектора:
     - connector_url: https://{domain}/crmapi/v1 (из ЛК МегаФон ВАТС)
     - access_token: API ключ (X-API-KEY)
-    - vpbx_api_key: CRM токен (для валидации webhook)
     """
 
     info = {
@@ -38,8 +42,9 @@ class ChatPhoneMegafonApp(App):
         "category": "Chat",
         "version": "1.0.0",
         "license": "FARA CRM License v1.0",
-        "depends": ["chat_phone"],
+        "depends": ["chat_phone", "cron"],
         "sequence": 117,
+        "post_init": True,
     }
 
     def __init__(self):
@@ -51,3 +56,11 @@ class ChatPhoneMegafonApp(App):
         )
 
         register_strategy(MegafonPhoneStrategy)
+
+    async def post_init(self, app: "FastAPI"):
+        """Cron импорта истории звонков и синхронизации номеров (по умолчанию
+        неактивны — включаются вручную в списке cron-задач)."""
+        await super().post_init(app)
+        await register_phone_crons(
+            app.state.env, label="MegaFon", strategy_type="phone_megafon"
+        )

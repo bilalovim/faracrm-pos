@@ -480,9 +480,9 @@ class ChatStrategyBase(ABC):
         """
         Синхронизировать номера / операторские линии из внешней системы.
 
-        Телефонные стратегии (Asterisk) переопределяют: тянут endpoints из АТС и
-        создают/обновляют операторские линии (ChatExternalAccount), сопоставляя
-        сотрудника по контакту (sip extension / phone). База — не поддерживает.
+        Телефонные стратегии переопределяют: тянут линии у провайдера и
+        создают/обновляют их в модели phone_number, сопоставляя сотрудника по
+        контакту (sip extension / phone). База — не поддерживает.
         Возвращает {"ok": bool, "message": str, "details": {...}}.
         """
         return {
@@ -515,23 +515,6 @@ class ChatStrategyBase(ABC):
             "imported": 0,
             "message": (
                 f"Импорт истории звонков не поддерживается для "
-                f"типа '{self.strategy_type}'"
-            ),
-        }
-
-    async def set_listener(
-        self, connector: "ChatConnector", enabled: bool, env
-    ) -> dict:
-        """
-        Включить/выключить постоянный in-process слушатель событий провайдера
-        (напр. Asterisk ARI в local-режиме). База не поддерживает.
-        Возвращает {"ok": bool, "enabled": bool, "message": str}.
-        """
-        return {
-            "ok": False,
-            "enabled": False,
-            "message": (
-                f"Слушатель событий не поддерживается для "
                 f"типа '{self.strategy_type}'"
             ),
         }

@@ -23,6 +23,50 @@ CALL_PERIOD_FILTERS = [
     ("Этот год", "{{year_start}}", False),
 ]
 
+# Фоновые задачи, одинаковые для всех телефонных провайдеров: бэкофилл истории
+# звонков и синхронизация номеров. Реализация — chat_phone/cron.py.
+# Интервал заметно меньше окна истории (HISTORY_WINDOW_MINUTES): перекрытие —
+# страховка от задержки записи у провайдера и от пропущенных тиков. Каждая
+# запись в окне прогоняется по разу на тик, поэтому 2 минуты при часовом окне
+# давали бы ~30 прогонов одного и того же.
+PHONE_CRONS = [
+    ("Fetch call history", "fetch_call_history", 15, "minutes"),
+    ("Sync numbers", "sync_numbers", 1, "days"),
+]
+
+
+async def register_phone_crons(
+    env: "Environment",
+    label: str,
+    strategy_type: str,
+) -> None:
+    """
+    Зарегистрировать cron-задачи телефонии для провайдера (идемпотентно).
+
+    По умолчанию НЕАКТИВНЫ — включаются вручную в списке cron-задач.
+    """
+    for suffix, func, interval_number, interval_type in PHONE_CRONS:
+        code = (
+            f"\nfrom backend.base.crm.chat_phone.cron import {func}\n"
+            f'result = await {func}(env, "{strategy_type}")\n'
+        )
+        job = await env.models.cron_job.create_or_update(
+            env=env,
+            name=f"{label}: {suffix}",
+            code=code,
+            interval_number=interval_number,
+            interval_type=interval_type,
+            active=False,
+            priority=20,
+        )
+        # create_or_update существующую задачу НЕ обновляет (там намеренно не
+        # трогают рантайм-состояние), а код задачи хранится в БД и исполняется
+        # оттуда. После переезда кронов на chat_phone.cron в старых базах остался
+        # бы вызов удалённого метода → AttributeError на каждом тике. Правим
+        # ТОЛЬКО код: active/nextcall не трогаем, иначе включённый крон выключится.
+        if job and job.code != code:
+            await job.update(env.models.cron_job(code=code))
+
 
 class ChatPhoneApp(App):
     """

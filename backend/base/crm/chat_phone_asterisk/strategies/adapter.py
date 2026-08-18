@@ -3,14 +3,10 @@
 
 from datetime import datetime
 
-from backend.base.crm.chat_phone.strategies.adapter import PhoneMessageAdapter
-
-
-def _digits(value: str | None) -> str:
-    """Только цифры из строки номера."""
-    if not value:
-        return ""
-    return "".join(ch for ch in value if ch.isdigit())
+from backend.base.crm.chat_phone.strategies.adapter import (
+    PhoneMessageAdapter,
+    digits_only as _digits,
+)
 
 
 class AsteriskPhoneAdapter(PhoneMessageAdapter):
@@ -54,18 +50,10 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
     """
 
     # ------------------------------------------------------------- shape
-    @property
-    def is_ari(self) -> bool:
-        """
-        ARI-событие гарантированно содержит строковое поле 'type' (например, 'StasisStart', 'Dial')
-        и один из ключевых объектов ARI (channel, bridge, endpoint, или поле application).
-        """
-        raw_type = self.raw.get("type")
-        if not isinstance(raw_type, str):
-            return False
-
-        # Список полей, которые встречаются только в иерархической структуре ARI JSON
-        ari_indicators = {
+    # Выносим маркеры на уровень класса как защищенную константу.
+    # Это экономит память и процессорное время.
+    _ARI_INDICATORS: frozenset[str] = frozenset(
+        {
             "channel",
             "bridge",
             "endpoint",
@@ -73,15 +61,21 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
             "recording",
             "application",
         }
+    )
 
-        # Если есть type И хотя бы один из индикаторов ARI структуры
-        # ИЛИ если это специфичное событие вроде "Dial"
-        if raw_type == "Dial" or any(
-            key in self.raw for key in ari_indicators
-        ):
-            return True
+    @property
+    def is_ari(self) -> bool:
+        """
+        ARI-событие гарантированно содержит строковое поле 'type'
+        и один из ключевых объектов иерархической структуры ARI JSON.
+        """
+        raw_type = self.raw.get("type")
+        if not isinstance(raw_type, str):
+            return False
 
-        return False
+        # Быстрая проверка: пересекаются ли ключи нашего JSON с маркерами ARI.
+        # Метод isdisjoint() в Python работает на C-уровне и оптимизирован по скорости.
+        return not self._ARI_INDICATORS.isdisjoint(self.raw)
 
     @property
     def _channel(self) -> dict:
@@ -100,22 +94,27 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
 
         etype = self.raw.get("type")
         channel = self.raw.get("channel") or {}
-        dialplan = channel.get("dialplan") or {}
 
-        # 1. Точное определение ответа (Ваша железная логика)
+        # 1. Определение ответа (answered)
+        # Вариант А: Стандартное изменение состояния канала на Up (для любых вызовов)
         if etype == "ChannelStateChange" and channel.get("state") == "Up":
-            if dialplan.get("app_name") == "AppDial":
-                caller_num = (channel.get("caller") or {}).get("number")
-                connected_num = (channel.get("connected") or {}).get("number")
-                if caller_num and connected_num:
-                    return "answered"
+            return "answered"
+
+        # Вариант Б: Специализированное событие Dial из ARI (подстраховка)
+        if etype == "Dial":
+            dialstatus = self.raw.get("dialstatus") or ""
+            if dialstatus.upper() == "ANSWER":
+                return "answered"
+
+        # Вариант В: Вход в бридж (гарантия того, что люди начали говорить)
+        if etype == "BridgeEnter":
+            return "answered"
 
         # 2. Точное определение НАСТОЯЩЕГО завершения звонка
         if etype == "ChannelDestroyed":
             return "ended"
 
-        # 3. Все остальные события (StasisStart, Dial, BridgeEnter, HangupRequest)
-        # Это рабочий процесс звонка, они не должны триггерить ни 'answered', ни 'ended'
+        # 3. Все остальные события (StasisStart, ChannelLeft, HangupRequest и т.д.)
         return "progress"
 
     # --------------------------------------------------------- direction
@@ -126,64 +125,54 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
 
         Приоритет:
         1. Префикс файла записи: out-… (исходящий) / in-… (входящий).
-        2. По кэшу наших номеров (_is_internal → _our_numbers; до cache_numbers —
-           fallback на длину ≤ 5):
+        2. По кэшу наших номеров (_is_internal):
            - оба наши          → "internal" (клиента НЕТ, звонок сотрудник↔сотрудник);
            - наш → не наш      → "outgoing";
            - не наш → наш      → "incoming";
            - оба чужие (транзит через АТС / мусор) → "incoming".
         """
-        if self.is_ari:
-            channel = self._channel
-            dialplan = channel.get("dialplan") or {}
-            src = (channel.get("caller") or {}).get("number") or ""
-            dst = (
-                (channel.get("connected") or {}).get("number")
-                or dialplan.get("exten")
-                or ""
-            )
-        else:
-            src = self.raw.get("src") or ""
-            dst = self.raw.get("dst") or ""
-
-        # Спец-значения диалплана Asterisk (s=старт-экстеншен, h=hangup-хендлер,
-        # unknown=нет CallerID) — это НЕ номер, обнуляем.
-        if dst in ("h", "s", "unknown"):
-            dst = ""
-
+        # 1. Сначала проверяем запись, как самый приоритетный источник
         recordingfile = (self.raw.get("recordingfile") or "").lower()
         if recordingfile.startswith("out-"):
             return "outgoing"
         if recordingfile.startswith("in-"):
             return "incoming"
 
+        # 2. Переиспользуем наши очищенные и валидированные свойства номеров
+        src = self.caller_number
+        dst = self.callee_number
+
+        # 3. Определяем направление на основе того, внутренние ли номера
         src_internal = self._is_internal(src)
         dst_internal = self._is_internal(dst)
+
         if src_internal and dst_internal:
             return "internal"  # оба наши → клиента нет
+
         if src_internal and not dst_internal:
             return "outgoing"
+
         # не наш → наш, либо оба чужие (транзит) → входящий
         return "incoming"
 
-    # Множество номеров СОТРУДНИКОВ коннектора (цифры extension/number линий с
-    # привязанным user_id), грузится в cache_numbers. None → не звали → fallback.
+    # Множество НАШИХ номеров коннектора (цифры extension/number всех его линий),
+    # грузится в cache_numbers. None → не звали → fallback.
     _our_numbers: "set[str] | None" = None
 
     async def cache_numbers(self, env) -> None:
         """
-        Загрузить номера СОТРУДНИКОВ коннектора (phone_number с привязанным
-        user_id) в множество. По нему _is_internal = «это линия сотрудника».
+        Загрузить номера коннектора (модель phone_number) в множество. По нему
+        _is_internal = «это наша линия».
 
-        Непривязанная линия (extension без сотрудника) внутренней НЕ считается —
-        звонок с/на такой номер идёт как клиентский (партнёр на этот номер). Один
-        запрос на звонок.
+        Берём ВСЕ линии, а не только привязанные к сотрудникам: то же правило,
+        по которому пайплайн определяет нашу ногу звонка
+        (PhoneNumber.find_by_number). Раньше здесь стоял фильтр по user_id —
+        от старой архитектуры, где «наш/клиент» решал адаптер; после переезда
+        на реестр номеров две трактовки «наш номер» разъезжались на линии без
+        сотрудника. Один запрос на звонок.
         """
         rows = await env.models.phone_number.search(
-            filter=[
-                ("connector_id", "=", self.connector.id),
-                ("user_id", "!=", None),
-            ],
+            filter=[("connector_id", "=", self.connector.id)],
             fields=["extension", "number"],
         )
         nums: "set[str]" = set()
@@ -196,8 +185,8 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
 
     def _is_internal(self, number: str | None) -> bool:
         """
-        Внутренний = номер СОТРУДНИКА (phone_number с user_id). До cache_numbers
-        (номера ещё не загружены) — fallback на длину (≤ 5 цифр).
+        Внутренний = НАША линия (есть в реестре phone_number коннектора). До
+        cache_numbers (номера ещё не загружены) — fallback на длину (≤ 5 цифр).
         """
         digits = _digits(number)
         if not digits:
@@ -207,43 +196,55 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
         return len(digits) <= 5
 
     # ------------------------------------------------------------ numbers
-    @staticmethod
-    def normalize_phone(number: str | None) -> str:
-        """
-        Канонизация номера клиента → E.164 (как Contact._canonicalize), чтобы
-        ключ чата и матчинг совпадали с хранимыми контактами (вариант A).
-
-        phonenumbers (libphonenumber), регион по умолчанию RU. Невалидные как
-        телефон — как цифры (fallback, в т.ч. если библиотека недоступна).
-        """
-        if not number:
-            return ""
-        v = number.strip()
-        try:
-            import phonenumbers
-
-            parsed = phonenumbers.parse(v, "RU")
-            if phonenumbers.is_valid_number(parsed):
-                return phonenumbers.format_number(
-                    parsed, phonenumbers.PhoneNumberFormat.E164
-                )
-        except Exception:
-            pass
-        return _digits(v)
-
     @property
     def caller_number(self) -> str:
-        """Инициатор звонка (src)."""
+        """Инициатор звонка (src). Очищает служебный мусор Asterisk."""
         if self.is_ari:
-            return self._channel.get("caller", {}).get("number", "") or ""
-        return self.raw.get("src", "") or ""
+            # Извлекаем номер из структуры caller
+            caller_data = self._channel.get("caller") or {}
+            src = caller_data.get("number") or ""
+
+            # Редкий фолбек: если caller.number пуст, но есть dialplan context
+            if not src:
+                dialplan = self._channel.get("dialplan") or {}
+                src = dialplan.get("caller_id_num") or ""
+        else:
+            src = self.raw.get("src") or ""
+
+        # Приводим к строке и убираем пробелы
+        src = str(src).strip()
+
+        # Фильтруем текстовую заглушку анонимных звонков
+        if src.lower() in ("unknown", "anonymous", "restricted", "hidden"):
+            return ""
+
+        return src
 
     @property
     def callee_number(self) -> str:
-        """Вызываемый (dst)."""
+        """
+        Вызываемый (dst). У ARI «connected» на хэнгапе бывает пуст — тогда берём
+        набранный exten диалплана. Спец-значения диалплана (h/s/i/t/unknown) отсекаются.
+        """
         if self.is_ari:
-            return self._channel.get("connected", {}).get("number", "") or ""
-        return self.raw.get("dst", "") or ""
+            dialplan = self._channel.get("dialplan") or {}
+            # Безопасное извлечение с фолбеком
+            dst = (
+                (self._channel.get("connected") or {}).get("number")
+                or dialplan.get("exten")
+                or ""
+            )
+
+            # Очищаем от пробелов и приводим к нижнему регистру для надежной проверки
+            dst_clean = dst.strip().lower()
+
+            # Расширенный список системных экстеншенов Asterisk
+            invalid_extensions = ("h", "s", "i", "t", "fax", "unknown", "")
+
+            return "" if dst_clean in invalid_extensions else dst.strip()
+
+        # Для не-ARI (например, AMI или CDR)
+        return str(self.raw.get("dst") or "").strip()
 
     @property
     def author_id(self) -> str:
@@ -254,20 +255,32 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
         Исходящий: клиент = callee (dst).
         Нормализация → все звонки одного клиента ложатся в один чат.
         """
-        if self.call_direction == "incoming":
-            return self.normalize_phone(self.caller_number)
-        return self.normalize_phone(self.callee_number)
+        # Используем уже очищенные свойства, чтобы не нормализовать "unknown" или пробелы
+        client_phone = (
+            self.caller_number
+            if self.call_direction == "incoming"
+            else self.callee_number
+        )
+        return self.normalize_phone(client_phone)
 
     @property
     def internal_number(self) -> str | None:
-        """Внутренний номер (extension) оператора."""
-        if self.is_ari:
-            return None
-        src, dst = self.raw.get("src"), self.raw.get("dst")
-        if self.call_direction == "outgoing" and self._is_internal(src):
-            return _digits(src)
-        if self.call_direction == "incoming" and self._is_internal(dst):
-            return _digits(dst)
+        """
+        Внутренний номер (extension) оператора.
+        Работает универсально для ARI, AMI и CDR.
+        """
+        # Берем уже полностью очищенные и валидированные номера
+        caller = self.caller_number
+        callee = self.callee_number
+
+        # Исходящий: оператор звонит клиенту. Оператор = caller (src)
+        if self.call_direction == "outgoing" and self._is_internal(caller):
+            return _digits(caller) or None
+
+        # Входящий: клиент звонит в компанию. Оператор = callee (dst)
+        if self.call_direction == "incoming" and self._is_internal(callee):
+            return _digits(callee) or None
+
         return None
 
     # ---------------------------------------------------------------- ids
@@ -297,9 +310,47 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
     # -------------------------------------------------------- disposition
     @property
     def disposition(self) -> str:
+        """
+        Результат звонка (исход) для CRM.
+        Универсально обрабатывает исторический CDR и живые события ARI.
+        """
+        # 1. Логика для живых событий Asterisk REST Interface (ARI)
         if self.is_ari:
-            return "answered"
-        status = (self.raw.get("disposition") or "").upper()
+            # Если звонок еще идет, его исход пока не ясен — он в процессе
+            if self.event_type != "ended":
+                return "no_answer"  # или "progress", в зависимости от логики вашей CRM
+
+            # Если звонок завершился, смотрим на статус диала (если он был в событии)
+            # Примечание: Asterisk возвращает DIALSTATUS в событии Dial
+            dialstatus = (self.raw.get("dialstatus") or "").upper()
+
+            # Также можно проверить стандартные коды завершения Asterisk Cause Codes, если они есть в JSON
+            # (например, в объекте channel.get("hangupcause"))
+            hangup_cause = int(
+                (self.raw.get("channel") or {}).get("hangupcause") or 0
+            )
+
+            # Маппинг живых статусов ARI
+            if (
+                dialstatus == "ANSWER" or hangup_cause == 16
+            ):  # 16 = Normal clearing (разговор состоялся)
+                return "answered"
+            if dialstatus == "BUSY" or hangup_cause == 17:  # 17 = User busy
+                return "busy"
+            if (
+                dialstatus in ("NOANSWER", "NO ANSWER") or hangup_cause == 19
+            ):  # 19 = No answer from user
+                return "no_answer"
+            if dialstatus == "CANCEL":
+                return "cancelled"
+
+            # Если точный статус не поймали, но мы знаем, что был факт ответа ранее:
+            # (Если в вашей системе сохраняется промежуточный стейт, лучше проверить его,
+            # иначе для сброшенных до ответа звонков возвращаем дефолт)
+            return "no_answer"
+
+        # 2. Логика для исторических записей из БД (CDR / AMI)
+        status = (self.raw.get("disposition") or "").upper().strip()
         mapping = {
             "ANSWERED": "answered",
             "NO ANSWER": "no_answer",
@@ -318,16 +369,11 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
         raw_start = self.raw.get("calldate") or self.raw.get("start")
         if not raw_start:
             return None
-        # Local-режим (прямой SQL, aiomysql/aiopg): calldate приходит уже как
-        # datetime-объект (не строка) — берём timestamp напрямую. Иначе billsec
-        # парсился, а calldate — нет, и время звонка становилось эпохой (1970).
-        if isinstance(raw_start, datetime):
-            return int(raw_start.timestamp())
         if isinstance(raw_start, (int, float)):
             return int(raw_start)
-        # Remote-режим (JSON от агента): обычно "2024-05-16T16:29:18", но возможны
-        # пробел вместо T, миллисекунды, таймзона. fromisoformat (py3.11+) съедает
-        # все эти варианты; strptime — запасной.
+        # JSON от агента: обычно "2024-05-16T16:29:18", но возможны пробел вместо
+        # T, миллисекунды, таймзона. fromisoformat (py3.11+) съедает все эти
+        # варианты; strptime — запасной.
         if isinstance(raw_start, str):
             iso = raw_start.strip().replace(" ", "T")
             try:

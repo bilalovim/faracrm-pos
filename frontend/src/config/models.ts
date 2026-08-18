@@ -203,6 +203,8 @@ export const modelsConfig: Record<string, ModelConfig> = {
       () => import('@/fara_chat_vk'),
       () => import('@/fara_chat_email'),
       () => import('@/fara_chat_phone_asterisk'),
+      () => import('@/fara_chat_phone_sipuni'),
+      () => import('@/fara_chat_phone_megafon'),
     ],
   },
   chat_external_account: {

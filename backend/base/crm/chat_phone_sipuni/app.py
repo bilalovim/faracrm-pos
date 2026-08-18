@@ -1,7 +1,13 @@
 # Copyright 2025 FARA CRM
 # Chat Phone Sipuni module - application configuration
 
+from typing import TYPE_CHECKING
+
 from backend.base.system.core.app import App
+from backend.base.crm.chat_phone.app import register_phone_crons
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 
 class ChatPhoneSipuniApp(App):
@@ -31,8 +37,9 @@ class ChatPhoneSipuniApp(App):
         "category": "Chat",
         "version": "1.0.0",
         "license": "FARA CRM License v1.0",
-        "depends": ["chat_phone"],
+        "depends": ["chat_phone", "cron"],
         "sequence": 116,
+        "post_init": True,
     }
 
     def __init__(self):
@@ -44,3 +51,11 @@ class ChatPhoneSipuniApp(App):
         )
 
         register_strategy(SipuniPhoneStrategy)
+
+    async def post_init(self, app: "FastAPI"):
+        """Cron импорта истории звонков и синхронизации номеров (по умолчанию
+        неактивны — включаются вручную в списке cron-задач)."""
+        await super().post_init(app)
+        await register_phone_crons(
+            app.state.env, label="Sipuni", strategy_type="phone_sipuni"
+        )

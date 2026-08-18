@@ -7,7 +7,7 @@
 # звонка делаем своими шагами:
 #   • внутренний звонок (обе ноги — наши линии) партнёра/лид НЕ заводит;
 #   • чат/сообщение/WS не создаём — пишем строку в call (upsert по uniqueid) +
-#     аудиозапись (res_model='call'); живой попап оператору идёт отдельно (ARI);
+#     аудиозапись (res_model='call') и показываем живую карточку (CallCard);
 #   • резолвим ДВЕ ноги → наша линия (phone_number_id), направление, is_internal.
 
 import json
@@ -15,26 +15,43 @@ import logging
 from typing import TYPE_CHECKING
 
 from backend.base.crm.chat.strategies.pipeline_incoming import (
+    IncomingMessage,
     IncomingMessagePipeline,
 )
+from backend.base.crm.chat_phone.call_card import CallCard
 
 if TYPE_CHECKING:
     from backend.base.crm.chat_phone.models.call import Call
+    from .adapter import PhoneMessageAdapter
 
 logger = logging.getLogger(__name__)
 
 
 class IncomingCallPipeline(IncomingMessagePipeline):
     """
-    Пайплайн ВХОДЯЩЕГО ЗВОНКА поверх message-пайплайна.
+    Пайплайн СОБЫТИЯ ЗВОНКА поверх message-пайплайна.
 
-    run(): _resolve_legs → (клиентский? _resolve_counterparty / _resolve_contact
-    / _attach_lead — шаги базового класса) → _persist_call. Роутинг в чат,
-    создание сообщения и WS-нотификацию НЕ выполняем.
+    Что делать с событием, решается ЗДЕСЬ (стратегия — только транспорт):
+      * answered → показать карточку тому, чья линия ответила; в реестр не пишем
+        (данных о звонке ещё нет);
+      * ended    → убрать карточку и записать звонок: _resolve_legs →
+        (клиентский? _resolve_counterparty / _resolve_contact / _attach_lead —
+        шаги базового класса) → _persist_call;
+      * прочее (дозвон, служебные события) → ничего.
+
+    Роутинг в чат, создание сообщения и WS-нотификацию НЕ выполняем.
     """
 
-    def __init__(self, strategy, env, connector, adapter, generate_lead=True):
-        # notify=False: в чат ничего не шлём (живой попап — отдельная ARI-карточка).
+    def __init__(
+        self,
+        strategy,
+        env,
+        connector,
+        adapter,
+        notify_card=True,
+        generate_lead=True,
+    ):
+        # notify=False: в чат ничего не шлём — у звонка своя карточка (CallCard).
         super().__init__(
             strategy,
             env,
@@ -43,22 +60,175 @@ class IncomingCallPipeline(IncomingMessagePipeline):
             notify=False,
             generate_lead=generate_lead,
         )
+        self.notify_card = notify_card
         self.call: "Call | None" = None
 
     async def run(self) -> "Call | None":
         ctx = self.ctx
-        # 1) Специфика звонка: наша линия, направление, внутренний ли.
+        await ctx.strategy.log_event(ctx.connector, ctx.env, ctx.adapter)
+
+        event = ctx.adapter.event_type
+        if event not in ("answered", "ended"):
+            return None  # дозвон и служебные события звонка
+
+        # Номера сотрудников (резолв «наш/клиент») нужны только с этого момента:
+        # на служебных событиях — а их у ARI большинство — в БД не ходим.
+        await ctx.adapter.cache_numbers(ctx.env)
+        # Ноги считаем ОДИН раз и до ветвления: и карточке, и записи нужны одни
+        # и те же факты — наша линия, её сотрудник, направление, клиент.
         await self._resolve_legs()
-        # 2) Клиентский звонок → тот же резолв клиента/партнёра/лида, что у
-        #    сообщений (шаги базового пайплайна). Внутренний (обе ноги — наши)
-        #    партнёра/лид не заводит: клиента нет.
-        if not self._is_internal and await self._resolve_counterparty():
-            await self._resolve_contact()
-            if self.generate_lead:
-                await self._attach_lead()
-        # 3) Персистенс звонка (upsert по uniqueid) + запись.
-        await self._persist_call()
+
+        if event == "answered":
+            await self._show_card()
+            return None
+
+        await self._hide_card()
+        for adapter in await self._final_adapters():
+            await self._save_call(adapter)
         return self.call
+
+    # ==================== живая карточка ====================
+
+    async def _show_card(self) -> None:
+        """
+        Карточка сотруднику, чья линия ответила.
+
+        Клиента резолвим ТОЛЬКО ЧТЕНИЕМ: партнёра и лид заводит запись звонка на
+        'ended' — внутри транзакции и когда звонок точно состоялся. Незнакомый
+        номер показываем как есть. Косметика не должна ронять обработку события,
+        поэтому ошибки гасим здесь, а не общим except стратегии.
+        """
+        if not (
+            self.notify_card and self._our_user_id and self._client_number
+        ):
+            return
+        if self._is_internal:
+            return  # сотрудник↔сотрудник: клиента нет
+
+        ctx = self.ctx
+        number = ctx.adapter.normalize_phone(self._client_number)
+        try:
+            name, partner_id, lead_id = await self._lookup_client(number)
+            await CallCard.show(
+                ctx.env,
+                self._our_user_id,
+                {
+                    "number": number,
+                    "name": name or number,
+                    "direction": self._direction,
+                    "disposition": "answered",
+                    "partner_id": partner_id,
+                    "lead_id": lead_id,
+                    "connector_type": ctx.connector.type,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[%s] call card show failed: %s",
+                ctx.strategy.strategy_type,
+                exc,
+            )
+
+    async def _hide_card(self) -> None:
+        """Убрать карточку у того же сотрудника, которому её показали."""
+        if not (
+            self.notify_card and self._our_user_id and self._client_number
+        ):
+            return
+        ctx = self.ctx
+        try:
+            await CallCard.hide(
+                ctx.env,
+                self._our_user_id,
+                ctx.adapter.normalize_phone(self._client_number),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[%s] call card hide failed: %s",
+                ctx.strategy.strategy_type,
+                exc,
+            )
+
+    async def _lookup_client(self, number: str):
+        """Партнёр и его свежий лид по номеру — (имя, partner_id, lead_id)."""
+        ctx = self.ctx
+        if not ctx.connector.contact_type_id:
+            return None, None, None
+        contact = await ctx.env.models.contact.find_for_webhook(
+            contact_type=ctx.connector.contact_type_id, value=number
+        )
+        if not (contact and contact.partner_id):
+            return None, None, None
+        lead = await ctx.env.models.lead.find_last_for_chat(
+            contact.partner_id.id, ctx.connector.id
+        )
+        return (
+            contact.partner_id.name,
+            contact.partner_id.id,
+            lead.id if lead else None,
+        )
+
+    # ==================== запись звонка ====================
+
+    async def _final_adapters(self) -> list["PhoneMessageAdapter"]:
+        """
+        Записи с ПОЛНЫМИ данными звонка. Обычно завершающее событие само ими и
+        является; Asterisk на ARI-хэнгапе данных не присылает и до-запрашивает
+        CDR — что именно спросить, знает стратегия провайдера.
+        """
+        ctx = self.ctx
+        records = await ctx.strategy.final_call_records(
+            ctx.connector, ctx.env, ctx.adapter
+        )
+        if records is None:
+            return [ctx.adapter]
+
+        adapters = []
+        for raw in records:
+            adapter = ctx.strategy.create_message_adapter(ctx.connector, raw)
+            if adapter.should_skip:
+                continue
+            await adapter.cache_numbers(ctx.env)
+            adapters.append(adapter)
+        return adapters
+
+    async def _save_call(self, adapter: "PhoneMessageAdapter") -> None:
+        """
+        Запись ОДНОГО звонка: свой контекст, своя транзакция.
+
+        Контекст на каждую запись новый: до-запрос может вернуть несколько строк
+        (Asterisk отдаёт CDR по uniqueid ИЛИ linkedid), и клиент/лид предыдущей
+        строки не должны протечь в следующую — у внутреннего звонка их нет вовсе.
+        """
+        base = self.ctx
+        ctx = self.ctx = IncomingMessage(
+            env=base.env,
+            connector=base.connector,
+            adapter=adapter,
+            strategy=base.strategy,
+        )
+        self.call = None
+        async with ctx.env.apps.db.get_transaction():
+            # Ноги события уже посчитаны в run(); пересчитываем только у
+            # до-запрошенных записей — у них они свои.
+            if adapter is not base.adapter:
+                await self._resolve_legs()
+            # Клиентский звонок → тот же резолв клиента/партнёра/лида, что у
+            # сообщений (шаги базового пайплайна). Внутренний (обе ноги — наши)
+            # партнёра/лид не заводит: клиента нет.
+            if not self._is_internal and await self._resolve_counterparty():
+                await self._resolve_contact()
+                if self.generate_lead:
+                    await self._attach_lead()
+            await self._persist_call()
+
+        # Запись разговора качаем ПОСЛЕ коммита: это HTTP на десятки секунд,
+        # держать на нём соединение пула нельзя. Повторную закачку гасит сам
+        # _save_recording (проверяет, что вложение уже есть).
+        if self.call:
+            await ctx.env.models.call._save_recording(
+                ctx.env, ctx.connector, adapter, ctx.strategy, self.call.id
+            )
 
     async def _resolve_legs(self) -> None:
         """
@@ -87,31 +257,37 @@ class IncomingCallPipeline(IncomingMessagePipeline):
             our_line = None
 
         self._phone_number_id = our_line.id if our_line else None
+        # Сотрудник нашей линии — он же адресат карточки. Приходит тем же
+        # запросом (find_by_number тянет user_id), отдельного не нужно.
+        self._our_user_id = (
+            our_line.user_id.id if (our_line and our_line.user_id) else None
+        )
         self._is_internal = bool(caller_line and callee_line)
+        # Клиент = ВНЕШНЯЯ нога, по уже вычисленному направлению: входящий →
+        # звонящий (src), исходящий → вызываемый (dst).
+        self._client_number = (
+            ctx.adapter.caller_number
+            if self._direction == "incoming"
+            else ctx.adapter.callee_number
+        )
 
     async def _resolve_counterparty(self) -> bool:
         """
-        Клиент = ВНЕШНЯЯ нога (та, что НЕ наша линия), по уже вычисленному
-        направлению: входящий → звонящий (src), исходящий → вызываемый (dst).
+        Клиент-контрагент — внешняя нога, посчитанная в _resolve_legs.
 
         Переопределяем базовый шаг (он берёт adapter.author_id через кэш
         сотрудников — для исходящего с транка/DID это дало бы наш же номер).
         Пусто → пропускаем резолв партнёра/лида.
         """
-        ctx = self.ctx
-        client = (
-            ctx.adapter.caller_number
-            if self._direction == "incoming"
-            else ctx.adapter.callee_number
-        )
-        if not client:
+        if not self._client_number:
             return False
-        ctx.counterparty_external_id = client
-        ctx.counterparty_external_name = client
+        ctx = self.ctx
+        ctx.counterparty_external_id = self._client_number
+        ctx.counterparty_external_name = self._client_number
         return True
 
     async def _persist_call(self) -> None:
-        """Upsert строки call по (connector, uniqueid) + аудиозапись."""
+        """Upsert строки call по (connector, uniqueid). Запись — после коммита."""
         ctx = self.ctx
         uid = ctx.adapter.message_id
         if not uid:
@@ -164,6 +340,16 @@ class IncomingCallPipeline(IncomingMessagePipeline):
             self.call = Call(**payload)
             self.call.id = await Call.create(payload=self.call)
 
-        await Call._save_recording(
-            ctx.env, ctx.connector, ctx.adapter, ctx.strategy, self.call.id
+        # Одна строка на исход — как _log_route у сообщений: по ней видно судьбу
+        # ЛЮБОГО звонка (у звонка своего _notify с логом нет).
+        logger.info(
+            "[%s] Call %s → id=%s (%s, internal=%s, line=%s, partner=%s, lead=%s)",
+            ctx.strategy.strategy_type,
+            uid,
+            self.call.id,
+            self._direction,
+            self._is_internal,
+            self._phone_number_id,
+            partner.id if partner else None,
+            ctx.lead_id,
         )

@@ -648,7 +648,7 @@ const chatApi = api.injectEndpoints({
       }),
     }),
 
-    // Sync operator lines/numbers from the PBX (Asterisk endpoints -> external accounts)
+    // Sync operator lines/numbers from the PBX/provider into the phone_number model
     syncNumbers: build.mutation<
       {
         data: {
@@ -666,7 +666,7 @@ const chatApi = api.injectEndpoints({
       invalidatesTags: [{ type: 'phone_number', id: 'LIST' }],
     }),
 
-    // Read call history from CDR for a date range (Asterisk) and import as calls.
+    // Read provider call history for a date range and import it into the call registry.
     // mode: normal (popup + lead) / no_notify / silent (message only, default).
     fetchCallHistory: build.mutation<
       { data: { ok: boolean; message: string; imported?: number } },
@@ -681,26 +681,6 @@ const chatApi = api.injectEndpoints({
         url: `/connectors/${connectorId}/fetch-history`,
         method: 'POST',
         body: { start, end, mode: mode ?? 'silent' },
-      }),
-    }),
-
-    // Start/stop the in-process ARI listener (Asterisk local-mode autostart switch)
-    startListener: build.mutation<
-      { data: { ok: boolean; message: string; enabled: boolean } },
-      { connectorId: number }
-    >({
-      query: ({ connectorId }) => ({
-        url: `/connectors/${connectorId}/listener/start`,
-        method: 'POST',
-      }),
-    }),
-    stopListener: build.mutation<
-      { data: { ok: boolean; message: string; enabled: boolean } },
-      { connectorId: number }
-    >({
-      query: ({ connectorId }) => ({
-        url: `/connectors/${connectorId}/listener/stop`,
-        method: 'POST',
       }),
     }),
 
@@ -1224,8 +1204,6 @@ export const {
   useTestConnectorMutation,
   useSyncNumbersMutation,
   useFetchCallHistoryMutation,
-  useStartListenerMutation,
-  useStopListenerMutation,
 } = chatApi;
 
 export const {

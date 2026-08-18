@@ -169,6 +169,27 @@ class Lead(AuditMixin, PolymorphicParentMixin):
             )
         return result
 
+    @classmethod
+    async def find_last_for_chat(cls, partner_id: int, connector_id: int):
+        """
+        Самый свежий лид клиента по этому коннектору.
+
+        Один запрос на двоих: лидогенерация ищет, к чему прицепиться, а карточка
+        звонка — куда вести оператора по ссылке. Правило «свежий лид клиента по
+        каналу» должно быть в одном месте.
+        """
+        rows = await env.models.lead.search(
+            filter=[
+                ("partner_id", "=", partner_id),
+                ("connector_id", "=", connector_id),
+            ],
+            fields=["id", "website", "name"],
+            sort="id",
+            order="DESC",
+            limit=1,
+        )
+        return rows[0] if rows else None
+
     @hybridmethod
     async def create_or_get_for_chat(
         self,
@@ -211,17 +232,7 @@ class Lead(AuditMixin, PolymorphicParentMixin):
         item_url = (item_url or "").strip()
 
         # Ищем существующий лид по (partner_id, connector_id) — берём свежий.
-        existing_leads = await self.search(
-            filter=[
-                ("partner_id", "=", partner.id),
-                ("connector_id", "=", connector.id),
-            ],
-            fields=["id", "website", "name"],
-            sort="id",
-            order="DESC",
-            limit=1,
-        )
-        existing_lead = existing_leads[0] if existing_leads else None
+        existing_lead = await self.find_last_for_chat(partner.id, connector.id)
 
         # Другой website — это другой лид.
         if (

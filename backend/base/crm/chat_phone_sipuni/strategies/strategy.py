@@ -4,8 +4,9 @@
 import csv
 import io
 import logging
+from datetime import datetime
 from hashlib import md5
-from typing import TYPE_CHECKING, Any, Tuple
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -14,9 +15,40 @@ from .adapter import SipuniPhoneAdapter
 
 if TYPE_CHECKING:
     from backend.project_setup import ChatConnector
-    from backend.base.crm.partners.models.contact import Contact
 
 logger = logging.getLogger(__name__)
+
+# Колонки выгрузки /statistic/export (порядок фиксирован Sipuni).
+HISTORY_COLUMNS = [
+    "Тип",
+    "Статус",
+    "Время",
+    "ID схемы звонка",
+    "Схема",
+    "Исходящая линия",
+    "Откуда",
+    "Куда",
+    "Кому звонили",
+    "Кто разговаривал",
+    "Кто ответил",
+    "Длительность звонка, сек",
+    "Длительность разговора, сек",
+    "Время ответа, сек",
+    "Оценка",
+    "ID записи",
+    "Метка",
+    "Теги",
+    "Инициатор завершения звонка",
+    "ID заказа звонка",
+    "Запись существует",
+    "Новый клиент",
+    "Состояние перезвона",
+    "Время перезвона",
+    "Информация из CRM",
+    "Ответственный из CRM",
+]
+
+OPERATOR_COLUMNS = ["Login", "Name", "Status", "Call state"]
 
 
 class SipuniPhoneStrategy(PhoneStrategyBase):
@@ -25,13 +57,9 @@ class SipuniPhoneStrategy(PhoneStrategyBase):
 
     API документация: https://sipuni.com/ru_RU/integration
 
-    Поддерживает:
-    - Приём событий звонков через webhook (event 1/2/3)
-    - Получение истории звонков через API
-    - Скачивание записей разговоров
-    - Получение списка операторов/номеров
-
-    Авторизация: login + password → HMAC MD5 подпись.
+    Транспорт как у прочих телефоний: события звонков Sipuni шлёт на webhook
+    FARA (event 1/2/3), а историю, записи и список операторов FARA тянет из
+    REST API. Авторизация: login + password → MD5-подпись запроса.
     """
 
     strategy_type = "phone_sipuni"
@@ -64,21 +92,6 @@ class SipuniPhoneStrategy(PhoneStrategyBase):
     async def unset_webhook(self, connector: "ChatConnector") -> Any:
         """Sipuni webhook удаляется вручную в ЛК."""
         return {"ok": True}
-
-    async def chat_send_message(
-        self,
-        connector: "ChatConnector",
-        user_from: "Contact",
-        body: str,
-        chat_id: str | None = None,
-        recipients_ids: list | None = None,
-        thread_message_id: str | None = None,
-        attachments: list | None = None,
-    ) -> Tuple[str, str]:
-        """Sipuni не поддерживает инициацию звонков через API."""
-        raise NotImplementedError(
-            "Sipuni does not support initiating calls via API"
-        )
 
     def create_message_adapter(
         self, connector: "ChatConnector", raw_message: dict
@@ -173,6 +186,43 @@ class SipuniPhoneStrategy(PhoneStrategyBase):
         return result
 
     # ========================================================================
+    # Номера (операторы Sipuni)
+    # ========================================================================
+
+    async def fetch_numbers(self, connector: "ChatConnector") -> list[dict]:
+        """
+        Операторы (внутренние номера) Sipuni → линии телефонии.
+
+        /statistic/operators отдаёт Login (внутренний номер), Name, Status,
+        Call state. Login и есть extension: по нему матчится sip-контакт
+        сотрудника и распознаётся «наша нога» звонка.
+        """
+        operators = await self._api_request(
+            connector,
+            "/statistic/operators",
+            csv_content=True,
+            csv_fields=OPERATOR_COLUMNS,
+        )
+
+        records = []
+        for rec in operators or []:
+            login = (rec.get("Login") or "").strip()
+            if not login:
+                continue
+            records.append(
+                {
+                    "external_id": f"operator:{login}",
+                    "kind": "number",
+                    "number": login,
+                    "extension": login,
+                    "name": rec.get("Name") or login,
+                    "user_key": login,
+                    "raw": rec,
+                }
+            )
+        return records
+
+    # ========================================================================
     # Скачивание записей разговоров
     # ========================================================================
 
@@ -184,13 +234,13 @@ class SipuniPhoneStrategy(PhoneStrategyBase):
         """
         Скачать запись разговора через Sipuni API.
 
-        Sipuni предоставляет call_record_link — прямой URL на запись.
-        Но также есть API endpoint /statistic/record.
-        Используем call_record_link если доступен, иначе API.
+        В webhook Sipuni кладёт call_record_link — прямой URL на запись; в
+        выгрузке истории ссылки нет, только признак наличия (адаптер отдаёт
+        маркер), и файл тянется по id через /statistic/record.
         """
         # Вариант 1: прямая ссылка из webhook
         record_link = adapter.call_record_url
-        if record_link:
+        if record_link and record_link.startswith("http"):
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.get(record_link)
@@ -224,35 +274,33 @@ class SipuniPhoneStrategy(PhoneStrategyBase):
         return None
 
     # ========================================================================
-    # Пакетный импорт звонков (cron)
+    # История звонков (импорт вручную / cron)
     # ========================================================================
 
     async def fetch_call_history(
         self,
         connector: "ChatConnector",
-        date_from: str,
-        date_to: str,
-        time_from: str = "",
-        time_to: str = "",
+        start_date: datetime,
+        end_date: datetime,
     ) -> list[dict]:
         """
-        Получить историю звонков через API Sipuni.
+        История звонков через /statistic/export (CSV) за период.
 
-        Args:
-            connector: Коннектор
-            date_from: Дата начала (DD.MM.YYYY)
-            date_to: Дата конца (DD.MM.YYYY)
-            time_from: Время начала (HH:MM)
-            time_to: Время конца (HH:MM)
-
-        Returns:
-            Список звонков (dict)
+        Даты Sipuni принимает как DD.MM.YYYY + ОТДЕЛЬНО время суток HH:MM, и
+        время применяется к КАЖДОМУ дню периода. Поэтому у окна через полночь
+        (23:40..00:40) пара timeFrom > timeTo противоречива и час до полуночи
+        не пришёл бы никогда — а именно так выглядит окно крона в 00:40.
+        Для такого окна просим сутки целиком, а лишнее отсекаем по времени
+        записи (_within): границы периода всё равно соблюдаются.
         """
+        start = start_date.astimezone()
+        end = end_date.astimezone()
+        same_day = start.date() == end.date()
         params = {
-            "from": date_from,
-            "to": date_to,
-            "timeFrom": time_from,
-            "timeTo": time_to,
+            "from": f"{start:%d.%m.%Y}",
+            "to": f"{end:%d.%m.%Y}",
+            "timeFrom": f"{start:%H:%M}" if same_day else "00:00",
+            "timeTo": f"{end:%H:%M}" if same_day else "23:59",
             "type": "0",  # Все звонки
             "state": "0",  # Все статусы
             "tree": "",
@@ -273,53 +321,99 @@ class SipuniPhoneStrategy(PhoneStrategyBase):
             "ignoreSpecChar": "0",
         }
 
-        csv_fields = [
-            "Тип",
-            "Статус",
-            "Время",
-            "ID схемы звонка",
-            "Схема",
-            "Исходящая линия",
-            "Откуда",
-            "Куда",
-            "Кому звонили",
-            "Кто разговаривал",
-            "Кто ответил",
-            "Длительность звонка, сек",
-            "Длительность разговора, сек",
-            "Время ответа, сек",
-            "Оценка",
-            "ID записи",
-            "Метка",
-            "Теги",
-            "Инициатор завершения звонка",
-            "ID заказа звонка",
-            "Запись существует",
-            "Новый клиент",
-            "Состояние перезвона",
-            "Время перезвона",
-            "Информация из CRM",
-            "Ответственный из CRM",
-        ]
-
-        return await self._api_request(
+        rows = await self._api_request(
             connector,
             "/statistic/export",
             params=params,
             csv_content=True,
-            csv_fields=csv_fields,
+            csv_fields=HISTORY_COLUMNS,
         )
+        events = [self._history_row_to_event(row) for row in rows or []]
+        return [
+            event
+            for event in events
+            if event and self._within(event, start, end)
+        ]
 
-    async def fetch_operators(self, connector: "ChatConnector") -> list[dict]:
-        """
-        Получить список операторов (внутренних номеров) из Sipuni.
+    @staticmethod
+    def _within(event: dict, start: datetime, end: datetime) -> bool:
+        """Запись попадает в запрошенное окно. Время не распознали — оставляем
+        (лучше лишняя запись, чем молча потерянный звонок)."""
+        started = event.get("call_start_timestamp") or 0
+        if not started:
+            return True
+        return start.timestamp() <= started <= end.timestamp()
 
-        Returns:
-            Список операторов с полями: Login, Name, Status, Call state
+    @staticmethod
+    def _history_row_to_event(row: dict) -> dict | None:
         """
-        return await self._api_request(
-            connector,
-            "/statistic/operators",
-            csv_content=True,
-            csv_fields=["Login", "Name", "Status", "Call state"],
-        )
+        Строка выгрузки статистики → событие ЗАВЕРШЕНИЯ звонка (event=2), т.е.
+        та же форма, что приходит на webhook, — её разбирает тот же адаптер.
+
+        Статус берём не из локализованной колонки, а по факту разговора
+        (длительность разговора > 0 → ANSWER), чтобы не зависеть от языка ЛК.
+        """
+        call_id = (row.get("ID записи") or "").strip()
+        if not call_id:
+            return None
+
+        def as_int(value) -> int:
+            try:
+                return int(float(str(value).replace(",", ".")))
+            except (TypeError, ValueError):
+                return 0
+
+        duration = as_int(row.get("Длительность звонка, сек"))
+        talk = as_int(row.get("Длительность разговора, сек"))
+        start_ts = SipuniPhoneStrategy._parse_history_time(row.get("Время"))
+        operator = (row.get("Кто разговаривал") or "").strip()
+
+        return {
+            "event": 2,  # завершение звонка
+            "call_id": call_id,
+            "src_num": (row.get("Откуда") or "").strip(),
+            "dst_num": (row.get("Куда") or "").strip(),
+            # Оператор — «наша нога»: в выгрузке это внутренний номер.
+            "short_src_num": operator if row.get("Тип") == "Исходящий" else "",
+            "short_dst_num": "" if row.get("Тип") == "Исходящий" else operator,
+            "status": "ANSWER" if talk else "NOANSWER",
+            "call_start_timestamp": start_ts,
+            "call_answer_timestamp": (
+                start_ts + max(0, duration - talk) if start_ts and talk else 0
+            ),
+            "timestamp": start_ts + duration if start_ts else 0,
+            # Ссылки на запись в выгрузке нет — только признак её наличия;
+            # файл тянется по id через API (см. _download_call_record).
+            "call_record_link": "",
+            "has_record": SipuniPhoneStrategy._as_bool(
+                row.get("Запись существует")
+            ),
+        }
+
+    @staticmethod
+    def _as_bool(value) -> bool:
+        """Флаг выгрузки («1» / «Да» / «true») → bool."""
+        return str(value or "").strip().lower() in ("1", "да", "yes", "true")
+
+    @staticmethod
+    def _parse_history_time(value: str | None) -> int:
+        """Время звонка из выгрузки → unix timestamp (0, если не распознали)."""
+        raw = (value or "").strip()
+        if not raw:
+            return 0
+        for fmt in (
+            "%d.%m.%Y %H:%M:%S",
+            "%d.%m.%Y %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+        ):
+            try:
+                return int(datetime.strptime(raw, fmt).timestamp())
+            except ValueError:
+                continue
+        try:
+            return int(datetime.fromisoformat(raw).timestamp())
+        except ValueError:
+            logger.warning(
+                "[phone_sipuni] не распознали время звонка: %r", raw
+            )
+            return 0

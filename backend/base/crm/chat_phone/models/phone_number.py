@@ -9,6 +9,8 @@
 # Наполняется синхронизацией номеров (strategy.sync_numbers), матчит сотрудника
 # (user_id) по его sip-контакту
 
+import json
+import logging
 from typing import TYPE_CHECKING
 
 from backend.base.system.dotorm.dotorm.fields import (
@@ -27,6 +29,8 @@ from backend.base.crm.users.audit_mixin import AuditMixin
 if TYPE_CHECKING:
     from backend.base.crm.users.models.users import User
     from backend.project_setup import ChatConnector
+
+logger = logging.getLogger(__name__)
 
 
 class PhoneNumber(AuditMixin, DotModel):
@@ -124,11 +128,12 @@ class PhoneNumber(AuditMixin, DotModel):
     active: bool = Boolean(default=True)
     sequence: int = Integer(default=10, description="Порядок сортировки")
 
+    @classmethod
     async def find_by_external_id(
-        self, external_id: str, connector_id: int
+        cls, external_id: str, connector_id: int
     ) -> "PhoneNumber | None":
         """Найти номер по external_id + коннектору (ключ upsert синхронизации)."""
-        rows = await self.search(
+        rows = await env.models.phone_number.search(
             filter=[
                 ("external_id", "=", external_id),
                 ("connector_id", "=", connector_id),
@@ -161,6 +166,102 @@ class PhoneNumber(AuditMixin, DotModel):
             limit=1,
         )
         return rows[0] if rows else None
+
+    # ==================== синхронизация с провайдером ====================
+
+    @classmethod
+    async def sync_from_provider(
+        cls, env, connector: "ChatConnector", records: list[dict]
+    ) -> dict:
+        """
+        Наполнить реестр номерами провайдера (кнопка/крон «Синхронизировать»).
+
+        records — линии в унифицированном виде (что именно спросить у провайдера,
+        знает его стратегия; см. PhoneStrategyBase.fetch_numbers):
+        {external_id, kind, number, extension, name, user_key, raw}.
+
+        Возвращает {"ok", "message", "details": {"synced", "linked"}}.
+        """
+        synced = 0
+        linked = 0
+        async with env.apps.db.get_transaction():
+            for rec in records:
+                if not rec.get("external_id"):
+                    continue
+                user_id = await cls._resolve_owner(rec.get("user_key"))
+                await cls._upsert_from_record(env, connector, rec, user_id)
+                synced += 1
+                if user_id:
+                    linked += 1
+
+        return {
+            "ok": True,
+            "message": (
+                f"Синхронизировано номеров: {synced} "
+                f"(привязано к сотрудникам: {linked})"
+            ),
+            "details": {"synced": synced, "linked": linked},
+        }
+
+    @classmethod
+    async def _resolve_owner(cls, value: str | None) -> int | None:
+        """
+        Сотрудник-владелец линии по ЛЮБОМУ его контакту с таким значением.
+
+        Тип контакта не фиксируем: у Asterisk линия сотрудника обычно заведена
+        как sip-extension, у Sipuni/МегаФона это может быть просто номер
+        (телефон) — важно совпадение значения, а не то, в какой графе оно лежит.
+        Канонизация одинаковая: «301» остаётся как есть, телефон → E.164. Поиск
+        идёт только по контактам СОТРУДНИКОВ (user_id задан), клиентские в
+        выборку не попадают. Транк/группа/очередь/неизвестный номер → None.
+        """
+        if not value:
+            return None
+        contact = await env.models.contact.find_operator_by_value(value)
+        user_id = contact.user_id.id if (contact and contact.user_id) else None
+        # Диагностика привязки: видно, нашёлся ли контакт сотрудника с таким
+        # номером и почему (контакт найден? user_id задан?).
+        logger.info(
+            "[phone_number] operator match: number=%r → contact_id=%s user_id=%s",
+            value,
+            contact.id if contact else None,
+            user_id,
+        )
+        return user_id
+
+    @classmethod
+    async def _upsert_from_record(
+        cls, env, connector: "ChatConnector", rec: dict, user_id: int | None
+    ) -> None:
+        """
+        Создать/обновить номер по (connector_id, external_id).
+
+        user_id (если найден сотрудник) проставляем; без матча привязку НЕ
+        трогаем (ручную не затираем). number/extension/name — идентификация.
+        """
+        external_id = rec["external_id"]
+        payload = dict(
+            kind=rec.get("kind") or "number",
+            number=rec.get("number"),
+            extension=rec.get("extension"),
+            raw=json.dumps(
+                rec.get("raw") or {}, ensure_ascii=False, default=str
+            ),
+        )
+        if user_id:
+            payload["user_id"] = env.models.user(id=user_id)
+
+        existing = await cls.find_by_external_id(external_id, connector.id)
+        if existing:
+            await existing.update(env.models.phone_number(**payload))
+            return
+
+        payload["name"] = rec.get("name") or rec.get("number") or external_id
+        payload["external_id"] = external_id
+        payload["connector_id"] = connector
+        await env.models.phone_number.create(
+            payload=env.models.phone_number(**payload)
+        )
 
     @staticmethod
     def _apply_operator_default(payload, assigned) -> None:
