@@ -338,5 +338,5 @@ async def __cron_task__():
             nextcall=datetime.now(timezone.utc),
             **kwargs,
         )
-        job = await env.models.cron_job.create(cron_job_new)
-        return job
+        cron_job_new.id = await env.models.cron_job.create(cron_job_new)
+        return cron_job_new
