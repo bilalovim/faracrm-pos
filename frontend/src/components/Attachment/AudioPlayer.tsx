@@ -83,8 +83,8 @@ export function AudioPlayer({
   const [duration, setDuration] = useState(0);
   const [isLoading] = useState(false);
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-
 
   // Загрузка аудио
   useEffect(() => {
@@ -92,6 +92,7 @@ export function AudioPlayer({
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
+    setError(null);
 
     // Если есть base64 контент
     if (content) {
@@ -130,27 +131,49 @@ export function AudioPlayer({
       setCurrentTime(0);
     };
 
+    // Иначе сбой не виден вообще: кнопка нажимается, ничего не происходит.
+    const handleError = () => {
+      const code = audio.error?.code;
+      setIsPlaying(false);
+      setError(
+        code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+          ? 'Формат записи не поддерживается браузером'
+          : 'Не удалось загрузить запись',
+      );
+    };
+
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
     };
   }, [audioSrc]);
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const audio = audioRef.current;
     if (!audio) return;
 
     if (isPlaying) {
       audio.pause();
-    } else {
-      audio.play();
+      setIsPlaying(false);
+      return;
     }
-    setIsPlaying(!isPlaying);
+    // play() возвращает промис и может отклониться — без await иконка
+    // переключалась на «паузу», а звука не было.
+    try {
+      await audio.play();
+      setIsPlaying(true);
+      setError(null);
+    } catch {
+      setIsPlaying(false);
+      setError('Не удалось воспроизвести запись');
+    }
   };
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
@@ -214,6 +237,12 @@ export function AudioPlayer({
           {formatDuration(currentTime)} / {formatDuration(duration)}
         </Text>
       </Group>
+
+      {error && (
+        <Text size="xs" c="red" mt={4}>
+          {error}
+        </Text>
+      )}
     </Box>
   );
 }

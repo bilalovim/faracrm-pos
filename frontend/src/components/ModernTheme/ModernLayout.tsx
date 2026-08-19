@@ -22,6 +22,7 @@ import { ActivityNotification } from '@/fara_activity/ActivityNotification';
 import { ChatWebSocketProvider } from '@/fara_chat/context';
 import { CallProvider } from '@/fara_chat/context/CallContext';
 import { CallWidget } from '@/fara_chat/components/CallWidget';
+import { IncomingCallCard } from '@/fara_telephony/IncomingCallCard';
 import { NotificationListener } from '@/components/NotificationToast/NotificationToast';
 import { AppLauncher } from './AppLauncher';
 import { HorizontalMenu } from './HorizontalMenu';
@@ -229,6 +230,8 @@ export function ModernLayout() {
         </AppShell.Main>
       </AppShell>
       <CallWidget />
+      {/* Карточка разговора телефонии — прилетает по WS на любом экране. */}
+      <IncomingCallCard />
       </CallProvider>
     </ChatWebSocketProvider>
   );

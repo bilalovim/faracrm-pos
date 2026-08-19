@@ -197,14 +197,25 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
 
     # ------------------------------------------------------------ numbers
     @property
+    def _ari_is_dialed_leg(self) -> bool:
+        """
+        Канал создан Dial'ом — номера в нём ЗЕРКАЛЬНЫ: caller.number это
+        вызываемый (равен dialplan.exten), connected.number — инициатор.
+        На живых событиях: исходящий 201→8918 (канал транка: caller=8918,
+        connected=201), входящий 7918→201 (канал PJSIP/201: caller=201,
+        connected=7918). «Сняли трубку» ловится именно на таком канале.
+        """
+        dialplan = self._channel.get("dialplan") or {}
+        return dialplan.get("app_name") == "AppDial"
+
+    @property
     def caller_number(self) -> str:
         """Инициатор звонка (src). Очищает служебный мусор Asterisk."""
         if self.is_ari:
-            # Извлекаем номер из структуры caller
-            caller_data = self._channel.get("caller") or {}
-            src = caller_data.get("number") or ""
+            side = "connected" if self._ari_is_dialed_leg else "caller"
+            src = (self._channel.get(side) or {}).get("number") or ""
 
-            # Редкий фолбек: если caller.number пуст, но есть dialplan context
+            # Редкий фолбек: если номер пуст, но есть dialplan context
             if not src:
                 dialplan = self._channel.get("dialplan") or {}
                 src = dialplan.get("caller_id_num") or ""
@@ -228,9 +239,10 @@ class AsteriskPhoneAdapter(PhoneMessageAdapter):
         """
         if self.is_ari:
             dialplan = self._channel.get("dialplan") or {}
-            # Безопасное извлечение с фолбеком
+            side = "caller" if self._ari_is_dialed_leg else "connected"
+            # Безопасное извлечение с фолбеком на набранный exten
             dst = (
-                (self._channel.get("connected") or {}).get("number")
+                (self._channel.get(side) or {}).get("number")
                 or dialplan.get("exten")
                 or ""
             )

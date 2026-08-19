@@ -8,6 +8,7 @@
 # call_external (Call.list_for_chat → messages-роутер).
 
 import logging
+import mimetypes
 from typing import TYPE_CHECKING
 
 from backend.base.system.dotorm.dotorm.fields import (
@@ -32,6 +33,10 @@ if TYPE_CHECKING:
     from backend.base.crm.attachments.models.attachments import Attachment
 
 logger = logging.getLogger(__name__)
+
+# Сигнатуры форматов записи, отличных от mp3 (он же — дефолт, см.
+# Call._recording_mimetype).
+AUDIO_SIGNATURES = ((b"RIFF", "audio/wav"), (b"OggS", "audio/ogg"))
 
 
 class Call(AuditMixin, DotModel):
@@ -251,18 +256,44 @@ class Call(AuditMixin, DotModel):
         await Call(id=call_id).update(Call(record_id=attachment))
 
     @staticmethod
+    def _recording_mimetype(content: bytes) -> str:
+        """
+        Формат записи — по сигнатуре СОДЕРЖИМОГО: FreePBX пишет wav, облачные
+        АТС mp3, а имя файла бывает без расширения. Неверный Content-Type ломает
+        воспроизведение в браузере (скачанный файл при этом играет — плеер ОС
+        определяет формат сам). Всё неопознанное считаем mp3, как раньше.
+        """
+        for signature, mimetype in AUDIO_SIGNATURES:
+            if content.startswith(signature):
+                return mimetype
+        return "audio/mpeg"
+
+    @staticmethod
+    def _recording_name(call: "Call", ext: str) -> str:
+        """Имя записи: кто кому звонил видно прямо в списке вложений."""
+        if call.direction == "incoming":
+            our, other = call.number_to, call.number_from
+        else:
+            our, other = call.number_from, call.number_to
+        return f"call_{call.uniqueid}_{call.direction}_{our or ''}_{other or ''}{ext}"
+
+    @staticmethod
     async def _save_recording(
-        env, connector, adapter, strategy, call_id
+        env, connector, adapter, strategy, call: "Call"
     ) -> None:
         """Скачать запись и прикрепить к звонку (res_model='call'), идемпотентно."""
+        call_id = call.id
         rec_name = getattr(adapter, "recording_filename", None)
         if not adapter.call_record_url:
-            # Нет файла записи в CDR (или billsec=0) — звонок без записи. Частый
-            # кейс: внутренние/непринятые звонки Asterisk не пишет.
+            # Отличаем «провайдер не отдаёт поле» от «АТС не писала разговор»:
+            # по одному recordingfile=None это неразличимо.
+            raw = getattr(adapter, "raw", None) or {}
             logger.info(
-                "[call %s] запись не качаем: recordingfile=%r, talk=%r",
+                "[call %s] запись не качаем: recordingfile=%r (поле у провайдера:"
+                " %s), talk=%r",
                 call_id,
                 rec_name,
+                "есть" if "recordingfile" in raw else "НЕТ",
                 getattr(adapter, "talk_duration", None),
             )
             return
@@ -287,9 +318,11 @@ class Call(AuditMixin, DotModel):
                     rec_name,
                 )
                 return
+            mimetype = Call._recording_mimetype(content)
+            ext = mimetypes.guess_extension(mimetype) or ".mp3"
             attachment = env.models.attachment(
-                name=f"call_{adapter.message_id}.mp3",
-                mimetype="audio/mpeg",
+                name=Call._recording_name(call, ext),
+                mimetype=mimetype,
                 res_id=call_id,
                 res_model="call",
                 is_voice=True,
@@ -300,9 +333,10 @@ class Call(AuditMixin, DotModel):
             )
             await Call._link_record(env, call_id, attachment_id)
             logger.info(
-                "[call %s] запись %r сохранена (%d байт)",
+                "[call %s] запись %r сохранена как %s (%d байт)",
                 call_id,
                 rec_name,
+                mimetype,
                 len(content),
             )
         except Exception as exc:  # noqa: BLE001

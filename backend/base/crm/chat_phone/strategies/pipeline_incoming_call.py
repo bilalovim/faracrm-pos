@@ -10,6 +10,7 @@
 #     аудиозапись (res_model='call') и показываем живую карточку (CallCard);
 #   • резолвим ДВЕ ноги → наша линия (phone_number_id), направление, is_internal.
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -25,6 +26,10 @@ if TYPE_CHECKING:
     from .adapter import PhoneMessageAdapter
 
 logger = logging.getLogger(__name__)
+
+# Ссылки на фоновые задачи записи — на уровне модуля: asyncio держит только
+# слабые, а пайплайн живёт лишь на время события.
+_recording_tasks: "set[asyncio.Task]" = set()
 
 
 class IncomingCallPipeline(IncomingMessagePipeline):
@@ -98,12 +103,20 @@ class IncomingCallPipeline(IncomingMessagePipeline):
         номер показываем как есть. Косметика не должна ронять обработку события,
         поэтому ошибки гасим здесь, а не общим except стратегии.
         """
-        if not (
-            self.notify_card and self._our_user_id and self._client_number
-        ):
+        if not self.notify_card:
             return
         if self._is_internal:
             return  # сотрудник↔сотрудник: клиента нет
+        if not (self._our_user_id and self._client_number):
+            # Иначе «попап не пришёл» не отличить от «попап не показывали».
+            logger.info(
+                "[%s] карточка не показана: линия=%s сотрудник=%s клиент=%r",
+                self.ctx.strategy.strategy_type,
+                self._phone_number_id,
+                self._our_user_id,
+                self._client_number,
+            )
+            return
 
         ctx = self.ctx
         number = ctx.adapter.normalize_phone(self._client_number)
@@ -222,13 +235,24 @@ class IncomingCallPipeline(IncomingMessagePipeline):
                     await self._attach_lead()
             await self._persist_call()
 
-        # Запись разговора качаем ПОСЛЕ коммита: это HTTP на десятки секунд,
-        # держать на нём соединение пула нельзя. Повторную закачку гасит сам
-        # _save_recording (проверяет, что вложение уже есть).
         if self.call:
-            await ctx.env.models.call._save_recording(
-                ctx.env, ctx.connector, adapter, ctx.strategy, self.call.id
-            )
+            self._schedule_recording(ctx, adapter, self.call)
+
+    def _schedule_recording(self, ctx, adapter, call) -> None:
+        """
+        Запись разговора — фоном: это скачивание у провайдера + заливка в
+        хранилище, секунды, а событие звонка приходит webhook-запросом (у
+        Asterisk-агента таймаут 5 с, и события он читает последовательно).
+        Не доедет — до-качает следующий проход по этому звонку (крон/импорт).
+        """
+        task = asyncio.create_task(
+            ctx.env.models.call._save_recording(
+                ctx.env, ctx.connector, adapter, ctx.strategy, call
+            ),
+            name=f"call_recording_{call.id}",
+        )
+        _recording_tasks.add(task)
+        task.add_done_callback(_recording_tasks.discard)
 
     async def _resolve_legs(self) -> None:
         """
@@ -333,9 +357,12 @@ class IncomingCallPipeline(IncomingMessagePipeline):
             fields=["id"],
             limit=1,
         )
+        # Полный payload в обеих ветках: из БД строка приходит только с id, а
+        # имени файла записи и логу нужны направление, uniqueid и номера.
         if existing:
-            self.call = existing[0]
-            await self.call.update(Call(**payload))
+            await existing[0].update(Call(**payload))
+            self.call = Call(**payload)
+            self.call.id = existing[0].id
         else:
             self.call = Call(**payload)
             self.call.id = await Call.create(payload=self.call)

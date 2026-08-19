@@ -8,7 +8,7 @@
 //
 // Монтируется один раз в ModernLayout (внутри ChatWebSocketProvider).
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Paper,
   Group,
@@ -26,7 +26,6 @@ import { Link } from 'react-router-dom';
 import { useChatWebSocketContext } from '@/fara_chat/context';
 
 interface CallCard {
-  message_id?: number;
   direction?: string;
   disposition?: string;
   number?: string;
@@ -34,14 +33,18 @@ interface CallCard {
   partner_id?: number | null;
   lead_id?: number | null;
   connector_type?: string;
-  chat_id?: number;
 }
 
-const AUTO_HIDE_MS = 30000;
+/** Сколько карточка висит минимум — чтобы короткий звонок не мигнул. */
+const MIN_VISIBLE_MS = 10_000;
+/** Страховка на случай, если call.ended потерялся: разговор столько не длится. */
+const AUTO_HIDE_MS = 30 * 60_000;
 
 export function IncomingCallCard() {
   const { addMessageListener } = useChatWebSocketContext();
   const [call, setCall] = useState<CallCard | null>(null);
+  const [endedNumber, setEndedNumber] = useState<string | null>(null);
+  const shownAt = useRef(0);
 
   const dismiss = useCallback(() => setCall(null), []);
 
@@ -49,29 +52,26 @@ export function IncomingCallCard() {
   useEffect(() => {
     return addMessageListener((msg: any) => {
       if (msg?.type === 'call.incoming' && msg.call) {
-        setCall({ ...msg.call, chat_id: msg.chat_id });
-      } else if (msg?.type === 'call.ended' && msg.call) {
-        // Эфемерный ARI-попап приходит без message_id → снимаем по номеру;
-        // событийные провайдеры (с message_id) — по message_id.
-        setCall(prev => {
-          if (!prev) return prev;
-          const sameMsg =
-            msg.call.message_id != null &&
-            prev.message_id === msg.call.message_id;
-          const sameNum =
-            msg.call.number != null && prev.number === msg.call.number;
-          return sameMsg || sameNum ? null : prev;
-        });
+        shownAt.current = Date.now();
+        setEndedNumber(null);
+        setCall(msg.call);
+      } else if (msg?.type === 'call.ended' && msg.call?.number) {
+        setEndedNumber(msg.call.number);
       }
     });
   }, [addMessageListener]);
 
-  // Страховочное авто-скрытие (на случай, если call.ended не пришёл).
+  // Пока разговор идёт — карточка висит. Закончился — досиживает
+  // MIN_VISIBLE_MS от момента показа.
   useEffect(() => {
     if (!call) return;
-    const t = setTimeout(() => setCall(null), AUTO_HIDE_MS);
+    const finished = endedNumber === call.number;
+    const delay = finished
+      ? Math.max(0, MIN_VISIBLE_MS - (Date.now() - shownAt.current))
+      : AUTO_HIDE_MS;
+    const t = setTimeout(() => setCall(null), delay);
     return () => clearTimeout(t);
-  }, [call]);
+  }, [call, endedNumber]);
 
   if (!call) return null;
 
@@ -84,14 +84,8 @@ export function IncomingCallCard() {
     ? `/leads/${call.lead_id}`
     : call.partner_id
       ? `/partners/${call.partner_id}`
-      : call.chat_id
-        ? '/chat'
-        : null;
-  const targetLabel = call.lead_id
-    ? 'Открыть лид'
-    : call.partner_id
-      ? 'Открыть партнёра'
-      : 'Открыть чат';
+      : null;
+  const targetLabel = call.lead_id ? 'Открыть лид' : 'Открыть партнёра';
 
   return (
     <Paper
