@@ -143,24 +143,27 @@ export function CallRecordCell({ record }: { record: CallRecord }) {
   if (!recording) return <Dash />;
 
   return (
-    <Popover position="left" shadow="md" withArrow withinPortal>
-      <Popover.Target>
-        <Tooltip label={t('calls.recordPlay', 'Прослушать')}>
-          <ActionIcon
-            variant="light"
-            radius="xl"
-            color="blue"
-            // Клик по строке открывает форму звонка — плееру это не нужно.
-            onClick={event => event.stopPropagation()}>
-            <IconPlayerPlayFilled size={14} />
-          </ActionIcon>
-        </Tooltip>
-      </Popover.Target>
-      <Popover.Dropdown onClick={event => event.stopPropagation()}>
-        <Box w={280}>
-          <AudioPlayer attachmentId={recording.id} />
-        </Box>
-      </Popover.Dropdown>
-    </Popover>
+    // Клик по строке открывает форму звонка — плееру это не нужно, поэтому
+    // гасим всплытие ОБЁРТКОЙ. Вешать onClick на саму кнопку нельзя: Popover
+    // пробрасывает в неё свой обработчик открытия, а Tooltip спредит props
+    // ребёнка последними — собственный onClick затирал бы открытие поповера.
+    <Box
+      style={{ display: 'inline-flex' }}
+      onClick={event => event.stopPropagation()}>
+      <Popover position="left" shadow="md" withArrow withinPortal>
+        <Popover.Target>
+          <Tooltip label={t('calls.recordPlay', 'Прослушать')}>
+            <ActionIcon variant="light" radius="xl" color="blue">
+              <IconPlayerPlayFilled size={14} />
+            </ActionIcon>
+          </Tooltip>
+        </Popover.Target>
+        <Popover.Dropdown>
+          <Box w={280}>
+            <AudioPlayer attachmentId={recording.id} />
+          </Box>
+        </Popover.Dropdown>
+      </Popover>
+    </Box>
   );
 }
