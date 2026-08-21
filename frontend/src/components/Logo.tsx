@@ -6,7 +6,7 @@ import {
 /**
  * Логотип в шапке CRM.
  * Если в Company задан logo_id — выводится этот файл.
- * Иначе — встроенный SVG fallback (FARA).
+ * Иначе — встроенный SVG fallback (POS-ATM).
  */
 const Logo = ({ variant }: { variant?: 'default' | 'login' } = {}) => {
   // <svg
@@ -263,7 +263,7 @@ const Logo = ({ variant }: { variant?: 'default' | 'login' } = {}) => {
     return <img src={url} alt="Logo" style={imgStyle} />;
   }
 
-  // Fallback — встроенный SVG "FARA"
+  // Fallback — встроенный SVG "POS-ATM"
   return (
     <svg
       width="300"
@@ -279,8 +279,8 @@ const Logo = ({ variant }: { variant?: 'default' | 'login' } = {}) => {
           x2="1"
           y1="0.5"
           y2="0.5">
-          <stop offset="0" stopColor="#009982" />
-          <stop offset="1" stopColor="#009982" />
+          <stop offset="0" stopColor="#00b89b" />
+          <stop offset="1" stopColor="#007868" />
         </linearGradient>
         <filter
           id="editing-gradow-filter"
@@ -304,16 +304,23 @@ const Logo = ({ variant }: { variant?: 'default' | 'login' } = {}) => {
         </filter>
       </defs>
       <g filter="url(#editing-gradow-filter)">
+        {/* POS Icon */}
+        <rect x="40" y="25" width="50" height="70" rx="8" fill="url(#editing-gradow-gradient)" />
+        <rect x="50" y="35" width="30" height="20" fill="white" opacity="0.9" />
+        <line x1="55" y1="42" x2="75" y2="42" stroke="#00b89b" strokeWidth="2" />
+        <line x1="55" y1="47" x2="70" y2="47" stroke="#00b89b" strokeWidth="2" />
+        <line x1="55" y1="52" x2="72" y2="52" stroke="#00b89b" strokeWidth="2" />
+        {/* ATM Text */}
         <text
-          x="50%"
-          y="50%"
+          x="140"
+          y="65"
           dominantBaseline="central"
           textAnchor="middle"
           fontWeight="900"
           fontFamily="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
-          fontSize="62px"
+          fontSize="52px"
           fill="url(#editing-gradow-gradient)">
-          FARA
+          POS-ATM
         </text>
       </g>
     </svg>
