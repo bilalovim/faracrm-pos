@@ -234,7 +234,12 @@ const Logo = ({ variant }: { variant?: 'default' | 'login' } = {}) => {
     }
   }
 
-  if (url) {
+  // Fallback — встроенный SVG "POS-ATM" (используется если нет кастомного логотипа)
+  // Встроенный логотип удалён, теперь всегда используется logo-mark.svg из public/
+  const fallbackUrl = '/logo-mark.svg';
+  
+  if (url || fallbackUrl) {
+    const finalUrl = url || fallbackUrl;
     // Размеры логотипа подбираются под место использования:
     // - login: вертикальный логотип/эмблема, помещается в formInner (~324px),
     //   высоты до 96px достаточно чтобы не «обрезался»
@@ -260,71 +265,8 @@ const Logo = ({ variant }: { variant?: 'default' | 'login' } = {}) => {
             objectFit: 'contain',
           };
 
-    return <img src={url} alt="Logo" style={imgStyle} />;
+    return <img src={finalUrl} alt="Logo" style={imgStyle} />;
   }
-
-  // Fallback — встроенный SVG "POS-ATM"
-  return (
-    <svg
-      width="300"
-      height="60"
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 300 120"
-      preserveAspectRatio="xMidYMid"
-      style={{ maxWidth: '300px', height: 'auto', display: 'block' }}>
-      <defs>
-        <linearGradient
-          id="editing-gradow-gradient"
-          x1="0"
-          x2="1"
-          y1="0.5"
-          y2="0.5">
-          <stop offset="0" stopColor="#00b89b" />
-          <stop offset="1" stopColor="#007868" />
-        </linearGradient>
-        <filter
-          id="editing-gradow-filter"
-          x="-100%"
-          y="-100%"
-          width="300%"
-          height="300%">
-          <feFlood floodColor="rgba(253,253,253,0)" result="flood" />
-          <feComposite
-            operator="in"
-            in2="SourceAlpha"
-            in="flood"
-            result="shadow"
-          />
-          <feOffset dx="-4" dy="-4" in="SourceGraphic" result="offset-1" />
-          <feOffset dx="4" dy="4" in="shadow" result="offset-2" />
-          <feMerge>
-            <feMergeNode in="offset-2" />
-            <feMergeNode in="offset-1" />
-          </feMerge>
-        </filter>
-      </defs>
-      <g filter="url(#editing-gradow-filter)">
-        {/* POS Icon */}
-        <rect x="40" y="25" width="50" height="70" rx="8" fill="url(#editing-gradow-gradient)" />
-        <rect x="50" y="35" width="30" height="20" fill="white" opacity="0.9" />
-        <line x1="55" y1="42" x2="75" y2="42" stroke="#00b89b" strokeWidth="2" />
-        <line x1="55" y1="47" x2="70" y2="47" stroke="#00b89b" strokeWidth="2" />
-        <line x1="55" y1="52" x2="72" y2="52" stroke="#00b89b" strokeWidth="2" />
-        {/* ATM Text */}
-        <text
-          x="140"
-          y="65"
-          dominantBaseline="central"
-          textAnchor="middle"
-          fontWeight="900"
-          fontFamily="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
-          fontSize="52px"
-          fill="url(#editing-gradow-gradient)">
-          POS-ATM
-        </text>
-      </g>
-    </svg>
-  );
 };
 
 export default Logo;
