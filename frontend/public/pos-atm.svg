@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!--
+    POS-ATM brand mark — стилизованная аббревиатура POS с акцентом на платежные технологии.
+    Зелёный градиент совпадает с #009982 в основном logo.svg.
+    Символ карты/терминала намекает на платежную функциональность.
+  -->
+  <defs>
+    <linearGradient id="pos-atm-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00b89b"/>
+      <stop offset="100%" stop-color="#007868"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Скруглённый зелёный квадрат-фон -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#pos-atm-grad)"/>
+
+  <!-- Стилизованная карта/терминал -->
+  <g fill="white">
+    <!-- Основной прямоугольник карты -->
+    <rect x="14" y="18" width="36" height="28" rx="3" fill="none" stroke="white" stroke-width="2.5"/>
+    
+    <!-- Чип карты -->
+    <rect x="18" y="24" width="10" height="8" rx="1.5" fill="white"/>
+    
+    <!-- Буквы POS внутри карты -->
+    <text x="32" y="38" font-family="Arial Black, Impact, sans-serif" font-size="14" font-weight="900" fill="white" text-anchor="middle">POS</text>
+  </g>
+</svg>
