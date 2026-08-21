@@ -320,7 +320,7 @@ export default function SignIn() {
             )}
 
             {/* Соцсети — если есть что показать */}
-            {socialLinks.length > 0 && (
+            {/*socialLinks.length > 0 && (
               <>
                 <Divider
                   label={
@@ -360,7 +360,7 @@ export default function SignIn() {
                   })}
                 </Group>
               </>
-            )}
+            )*/}
 
             <Text ta="center" size="xs" c="dimmed" className={classes.version}>
               FARA CRM v{publicConfig?.version}
