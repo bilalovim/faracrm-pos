@@ -472,7 +472,7 @@ function UserMenu() {
           py={6}
           style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}>
           <Text size="xs" c="dimmed">
-            FARA CRM v{publicConfig?.version}
+            POS-ATM v{publicConfig?.version}
           </Text>
         </Box>
       </Menu.Dropdown>
