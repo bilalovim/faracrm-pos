@@ -363,7 +363,7 @@ export default function SignIn() {
             )*/}
 
             <Text ta="center" size="xs" c="dimmed" className={classes.version}>
-              FARA CRM v{publicConfig?.version}
+              POS-ATM v{publicConfig?.version}
             </Text>
           </Stack>
         </form>
