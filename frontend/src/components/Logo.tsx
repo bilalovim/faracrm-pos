@@ -235,8 +235,8 @@ const Logo = ({ variant }: { variant?: 'default' | 'login' } = {}) => {
   }
 
   // Fallback — встроенный SVG "POS-ATM" (используется если нет кастомного логотипа)
-  // Встроенный логотип удалён, теперь всегда используется logo-mark.svg из public/
-  const fallbackUrl = '/logo-mark.svg';
+  // Теперь используется новый логотип pos-atm-logo.svg из public/
+  const fallbackUrl = '/pos-atm-logo.svg';
   
   if (url || fallbackUrl) {
     const finalUrl = url || fallbackUrl;
